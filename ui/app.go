@@ -309,6 +309,7 @@ func (m *AppModel) updateCommandSuggestions() {
 	
 	sugs = append(sugs, Suggestion{"/clear", "Clear active list filters"})
 	sugs = append(sugs, Suggestion{"/help", "Show help documentation"})
+	sugs = append(sugs, Suggestion{"/ticket ", "Open a ticket directly by ID"})
 	
 	if m.prevState == stateTasks && len(m.allTasks) > 0 {
 		sugs = append(sugs, Suggestion{"/filter assignee", "Filter by a specific assignee"})
@@ -664,6 +665,21 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					// Re-apply filter so lists reflect changes
 					m.applyHierarchyFilter(strings.TrimPrefix(m.cmdInput.Value(), "/filter "))
+				}
+			} else if strings.HasPrefix(val, "/ticket ") {
+				id := strings.TrimSpace(strings.TrimPrefix(val, "/ticket "))
+				if id != "" {
+					teamID := m.selectedTeam
+					if teamID == "" && len(m.allTeams) > 0 {
+						teamID = m.allTeams[0].ID
+					}
+					task, err := m.client.GetTask(id, teamID)
+					if err == nil && task != nil {
+						m.selectedTask = *task
+						m.taskHistory = nil
+						m.state = stateTaskDetail
+						m.updateViewportContent()
+					}
 				}
 			} else if strings.HasPrefix(val, "/points ") {
 				if m.prevState == stateTaskDetail {

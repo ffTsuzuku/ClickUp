@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 )
 
 const BaseURL = "https://api.clickup.com/api/v2"
@@ -183,6 +184,26 @@ func (c *Client) GetTasks(listID string) ([]Task, error) {
 		return nil, err
 	}
 	return result.Tasks, nil
+}
+
+// GetTask fetches a single task by its ClickUp ID or Custom ID
+func (c *Client) GetTask(taskID string, teamID string) (*Task, error) {
+	if strings.Contains(taskID, "-") {
+		taskID = strings.ToUpper(taskID)
+	}
+	endpoint := fmt.Sprintf("/task/%s", taskID)
+	if teamID != "" && strings.Contains(taskID, "-") {
+		endpoint = fmt.Sprintf("/task/%s?custom_task_ids=true&team_id=%s", taskID, teamID)
+	}
+	data, err := c.doReq("GET", endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	var task Task
+	if err := json.Unmarshal(data, &task); err != nil {
+		return nil, err
+	}
+	return &task, nil
 }
 
 // AddComment is a mock for now (requires view task detail parsing or specific endpoint)
