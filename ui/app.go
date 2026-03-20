@@ -44,7 +44,13 @@ func (t listItem) Description() string { return "List" }
 func (t listItem) FilterValue() string { return t.Name }
 
 type taskItem clickup.Task
-func (t taskItem) Title() string       { return t.Name }
+func (t taskItem) Title() string {
+	id := t.ID
+	if t.CustomID != "" {
+		id = t.CustomID
+	}
+	return fmt.Sprintf("[%s] %s", id, t.Name) 
+}
 func (t taskItem) Description() string { 
 	assignee := "unassigned"
 	if len(t.Assignees) > 0 { assignee = strings.ToLower(t.Assignees[0].Username) }
@@ -58,7 +64,14 @@ func (t taskItem) FilterValue() string {
 	
 	title := strings.ToLower(t.Name)
 	status := strings.ToLower(t.Status.Status)
-	return fmt.Sprintf("assignee:%s status:%s title:%s %s", assignee, status, title, t.Name)
+	
+	id := t.ID
+	if t.CustomID != "" {
+		id = t.CustomID
+	}
+	idLower := strings.ToLower(id)
+	
+	return fmt.Sprintf("id:%s assignee:%s status:%s title:%s %s %s", idLower, assignee, status, title, t.Name, idLower)
 }
 
 type Suggestion struct {
@@ -286,6 +299,7 @@ func (m *AppModel) updateCommandSuggestions() {
 		sugs = append(sugs, Suggestion{"/filter assignee", "Filter by a specific assignee"})
 		sugs = append(sugs, Suggestion{"/filter status", "Filter by task status"})
 		sugs = append(sugs, Suggestion{"/filter title", "Filter by task title text"})
+		sugs = append(sugs, Suggestion{"/filter id", "Filter by task ID"})
 		
 		assignees := make(map[string]bool)
 		statuses := make(map[string]bool)
@@ -401,6 +415,12 @@ func (m *AppModel) applyTaskFilter(query string) {
 		if len(t.Assignees) > 0 { assignee = strings.ToLower(t.Assignees[0].Username) }
 		status := strings.ToLower(t.Status.Status)
 		title := strings.ToLower(t.Name)
+		
+		id := t.ID
+		if t.CustomID != "" {
+			id = t.CustomID
+		}
+		idLower := strings.ToLower(id)
 
 		if strings.HasPrefix(query, "assignee ") {
 			term := strings.TrimPrefix(query, "assignee ")
@@ -417,8 +437,13 @@ func (m *AppModel) applyTaskFilter(query string) {
 			if fuzzyMatch(term, title) {
 				items = append(items, taskItem(t))
 			}
+		} else if strings.HasPrefix(query, "id ") {
+			term := strings.TrimPrefix(query, "id ")
+			if fuzzyMatch(term, idLower) {
+				items = append(items, taskItem(t))
+			}
 		} else {
-			if fuzzyMatch(query, title) || fuzzyMatch(query, assignee) || fuzzyMatch(query, status) {
+			if fuzzyMatch(query, title) || fuzzyMatch(query, assignee) || fuzzyMatch(query, status) || fuzzyMatch(query, idLower) {
 				items = append(items, taskItem(t))
 			}
 		}

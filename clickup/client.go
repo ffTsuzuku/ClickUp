@@ -159,6 +159,7 @@ type Assignee struct {
 
 type Task struct {
 	ID          string     `json:"id"`
+	CustomID    string     `json:"custom_id"`
 	Name        string     `json:"name"`
 	Desc        string     `json:"description"`
 	Status      TaskStatus `json:"status"`
