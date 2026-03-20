@@ -9,6 +9,7 @@ import (
 	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -31,6 +32,7 @@ const (
 	stateHelp
 	stateCreateTask
 	stateMovePicker
+	stateEditDesc
 )
 
 // Item Wrappers
@@ -105,6 +107,7 @@ type AppModel struct {
 
 	commentInput textinput.Model
 	taskInput    textinput.Model // used for create / rename
+	descInput    textarea.Model
 	cmdInput     textinput.Model
 	vp           viewport.Model
 	width        int
@@ -249,6 +252,13 @@ func InitialModel() *AppModel {
 	ti.Placeholder = "Task name..."
 	ti.CharLimit = 200
 
+	// textarea for description editing
+	da := textarea.New()
+	da.Placeholder = "Enter description..."
+	da.CharLimit = 5000
+	da.SetWidth(80)
+	da.SetHeight(10)
+
 	vp := viewport.New(0, 0)
 	vp.Style = DetailStyle
 
@@ -268,6 +278,7 @@ func InitialModel() *AppModel {
 		allTeams:     allTeams,
 		commentInput: ci,
 		taskInput:    ti,
+		descInput:    da,
 		cmdInput:     cmd,
 		vp:           vp,
 		spinner:      s,
@@ -341,6 +352,8 @@ func (m *AppModel) updateLayout() {
 	m.tasksList.SetSize(m.width-h, contentH)
 	m.vp.Width = m.width - h
 	m.vp.Height = contentH
+	m.descInput.SetWidth(m.width - h)
+	m.descInput.SetHeight(contentH)
 }
 
 func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -458,6 +471,8 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateCreateTask(msg)
 	case stateMovePicker:
 		return m.updateMovePicker(msg)
+	case stateEditDesc:
+		return m.updateEditDesc(msg)
 	}
 
 	return m, tea.Batch(cmds...)
@@ -542,6 +557,7 @@ func (m *AppModel) updateCommandSuggestions() {
 		sugs = append(sugs, Suggestion{"/delete", "Delete this ticket permanently"})
 		sugs = append(sugs, Suggestion{"/move", "Move this ticket to another list"})
 		sugs = append(sugs, Suggestion{"/assign ", "Change assignee (e.g. /assign deep)"})
+		sugs = append(sugs, Suggestion{"/desc", "Edit the ticket description"})
 
 		// Suggest all known workspace members
 		for _, member := range m.teamMembers {
@@ -791,6 +807,11 @@ func (m *AppModel) updateDetail(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.state = stateComment
 			m.commentInput.Focus()
 			return m, textinput.Blink
+		case "e":
+			m.state = stateEditDesc
+			m.descInput.SetValue(m.selectedTask.Desc)
+			m.descInput.Focus()
+			return m, textarea.Blink
 		case "s":
 			if m.selectedTask.URL != "" {
 				clipboard.WriteAll(m.selectedTask.URL)
@@ -894,6 +915,36 @@ func (m *AppModel) updateMovePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+func (m *AppModel) updateEditDesc(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.Type {
+		case tea.KeyEsc:
+			m.descInput.Blur()
+			m.state = stateTaskDetail
+			return m, nil
+		case tea.KeyCtrlS:
+			desc := m.descInput.Value()
+			m.descInput.Blur()
+			m.state = stateTaskDetail
+			if err := m.client.UpdateDescription(m.selectedTask.ID, desc); err == nil {
+				m.selectedTask.Desc = desc
+				for i, t := range m.allTasks {
+					if t.ID == m.selectedTask.ID {
+						m.allTasks[i].Desc = desc
+						break
+					}
+				}
+			}
+			m.updateViewportContent()
+			return m, nil
+		}
+	}
+	var cmd tea.Cmd
+	m.descInput, cmd = m.descInput.Update(msg)
+	return m, cmd
 }
 
 func (m *AppModel) updateHelp(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -1042,6 +1093,13 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.loading = true
 					m.loadingMsg = "Loading available lists..."
 					return m, tea.Batch(m.spinner.Tick, fetchAllListsForMoveCmd(m.client, m.selectedSpace))
+				}
+			} else if strings.HasPrefix(val, "/desc") {
+				if m.prevState == stateTaskDetail {
+					m.state = stateEditDesc
+					m.descInput.SetValue(m.selectedTask.Desc)
+					m.descInput.Focus()
+					return m, textarea.Blink
 				}
 			} else if strings.HasPrefix(val, "/assign ") {
 				if m.prevState == stateTaskDetail {
@@ -1264,6 +1322,10 @@ func (m *AppModel) View() string {
 		}
 		sb.WriteString("\n" + lipgloss.NewStyle().Foreground(ColorSubtext).Render("Up/Down to select | Enter to move | Esc to cancel"))
 		mainContent = sb.String()
+	case stateEditDesc:
+		header := TitleStyle.Render(fmt.Sprintf("Editing: %s", m.selectedTask.Name))
+		hint := lipgloss.NewStyle().Foreground(ColorSubtext).Render("Ctrl+S to save | Esc to cancel")
+		mainContent = header + "\n\n" + m.descInput.View() + "\n" + hint
 	case stateCommand:
 		if m.prevState == stateTaskDetail || m.prevState == stateHelp {
 			mainContent = m.vp.View()

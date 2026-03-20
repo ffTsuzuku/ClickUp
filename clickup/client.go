@@ -297,7 +297,6 @@ func (c *Client) MoveTask(taskID, destListID string) error {
 }
 
 // UpdateAssignees replaces the assignees on a task.
-// addIDs are user IDs to add; removeIDs are user IDs to remove.
 func (c *Client) UpdateAssignees(taskID string, addIDs []int, removeIDs []int) error {
 	endpoint := fmt.Sprintf("/task/%s", taskID)
 	reqBody := map[string]interface{}{}
@@ -311,6 +310,15 @@ func (c *Client) UpdateAssignees(taskID string, addIDs []int, removeIDs []int) e
 			reqBody["assignees"] = map[string]interface{}{"rem": removeIDs}
 		}
 	}
+	body, _ := json.Marshal(reqBody)
+	_, err := c.doReq("PUT", endpoint, body)
+	return err
+}
+
+// UpdateDescription updates the description of a task
+func (c *Client) UpdateDescription(taskID, description string) error {
+	endpoint := fmt.Sprintf("/task/%s", taskID)
+	reqBody := map[string]interface{}{"description": description}
 	body, _ := json.Marshal(reqBody)
 	_, err := c.doReq("PUT", endpoint, body)
 	return err
