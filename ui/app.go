@@ -353,6 +353,8 @@ func (m *AppModel) updateCommandSuggestions() {
 	if m.prevState == stateTeams || m.prevState == stateSpaces || m.prevState == stateLists {
 		sugs = append(sugs, Suggestion{"/default set", "Set the currently highlighted item as your default routing"})
 	}
+	sugs = append(sugs, Suggestion{"/default user ", "Set a default assignee filter (e.g. /default user deep)"})
+	sugs = append(sugs, Suggestion{"/default user clear", "Clear default assignee filter"})
 	sugs = append(sugs, Suggestion{"/default clear", "Clear all default automatic routing"})
 	
 	if m.prevState == stateTasks && len(m.allTasks) > 0 {
@@ -465,18 +467,30 @@ func (m *AppModel) applyTaskFilter(query string) {
 	var items []list.Item
 	query = strings.ToLower(strings.TrimSpace(query))
 	
+	totalPoints := 0.0
+	defaultUser := strings.ToLower(m.cfg.ClickupUserName)
+	
 	for _, t := range m.allTasks {
 		if t.Parent != nil {
 			continue // Hide subtasks from the main root list view
 		}
 		
+		assignee := "unassigned"
+		if len(t.Assignees) > 0 { assignee = strings.ToLower(t.Assignees[0].Username) }
+		
+		// If a default user is set, heavily prioritize it unless an explicit assignee override is typed
+		if defaultUser != "" && !strings.HasPrefix(query, "assignee ") && defaultUser != "clear" {
+			if !strings.Contains(assignee, defaultUser) && !fuzzyMatch(defaultUser, assignee) {
+				continue
+			}
+		}
+
 		if query == "" {
 			items = append(items, taskItem(t))
+			if t.Points != nil { totalPoints += *t.Points }
 			continue
 		}
 		
-		assignee := "unassigned"
-		if len(t.Assignees) > 0 { assignee = strings.ToLower(t.Assignees[0].Username) }
 		status := strings.ToLower(t.Status.Status)
 		title := strings.ToLower(t.Name)
 		
@@ -509,16 +523,11 @@ func (m *AppModel) applyTaskFilter(query string) {
 		} else {
 			if fuzzyMatch(query, title) || fuzzyMatch(query, assignee) || fuzzyMatch(query, status) || fuzzyMatch(query, idLower) {
 				items = append(items, taskItem(t))
+				if t.Points != nil { totalPoints += *t.Points }
 			}
 		}
 	}
 	
-	totalPoints := 0.0
-	for _, item := range items {
-		if p := clickup.Task(item.(taskItem)).Points; p != nil {
-			totalPoints += *p
-		}
-	}
 	m.tasksList.Title = fmt.Sprintf("Tasks (Total Points: %v)", totalPoints)
 	m.tasksList.SetItems(items)
 }
@@ -765,6 +774,17 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.cfg.ClickupTeamID = m.selectedTeam
 						config.SaveConfig(m.cfg)
 					}
+				}
+			} else if strings.HasPrefix(val, "/default user clear") {
+				m.cfg.ClickupUserName = ""
+				config.SaveConfig(m.cfg)
+				m.applyHierarchyFilter(strings.TrimPrefix(m.cmdInput.Value(), "/filter "))
+			} else if strings.HasPrefix(val, "/default user ") {
+				user := strings.TrimSpace(strings.TrimPrefix(val, "/default user "))
+				if user != "" && user != "clear" {
+					m.cfg.ClickupUserName = user
+					config.SaveConfig(m.cfg)
+					m.applyHierarchyFilter(strings.TrimPrefix(m.cmdInput.Value(), "/filter "))
 				}
 			} else if strings.HasPrefix(val, "/default clear") {
 				m.cfg.ClickupTeamID = ""
