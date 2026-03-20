@@ -25,6 +25,7 @@ const (
 	stateTaskDetail
 	stateComment
 	stateCommand
+	stateHelp
 )
 
 // Item Wrappers
@@ -288,6 +289,8 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateComment(msg)
 	case stateCommand:
 		return m.updateCommand(msg)
+	case stateHelp:
+		return m.updateHelp(msg)
 	}
 
 	return m, tea.Batch(cmds...)
@@ -656,6 +659,23 @@ func (m *AppModel) updateComment(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+func (m *AppModel) updateHelp(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "esc", "q", "left", "enter":
+			m.state = m.prevState
+			if m.state == stateTaskDetail {
+				m.updateViewportContent()
+			}
+			return m, nil
+		}
+	}
+	var cmd tea.Cmd
+	m.vp, cmd = m.vp.Update(msg)
+	return m, cmd
+}
+
 func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
@@ -702,6 +722,9 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.applyHierarchyFilter(term)
 			} else if strings.HasPrefix(val, "/clear") {
 				m.applyHierarchyFilter("")
+			} else if strings.HasPrefix(val, "/help") {
+				m.state = stateHelp
+				m.updateHelpContent()
 			} else if strings.HasPrefix(val, "/status ") {
 				if m.prevState == stateTaskDetail {
 					newStatus := strings.TrimPrefix(val, "/status ")
@@ -849,6 +872,46 @@ func (m *AppModel) updateViewportContent() {
 	m.vp.SetContent(b.String())
 }
 
+func (m *AppModel) updateHelpContent() {
+	var b strings.Builder
+	
+	b.WriteString(TitleStyle.Render("ClickUp TUI - Help & Commands"))
+	b.WriteString("\n\n")
+	
+	b.WriteString(lipgloss.NewStyle().Bold(true).Render("Navigation"))
+	b.WriteString("\n")
+	b.WriteString("• Up/Down/j/k  : Navigate lists and text\n")
+	b.WriteString("• Enter/Right  : Select item or view details\n")
+	b.WriteString("• Esc/Left     : Go back to previous screen\n")
+	b.WriteString("• 1-9          : While viewing a task, jump directly to a subtask by its number\n\n")
+
+	b.WriteString(lipgloss.NewStyle().Bold(true).Render("Global Commands (Type / to open prompt)"))
+	b.WriteString("\n")
+	b.WriteString("• /filter <text>           : Fuzzy search the current view\n")
+	b.WriteString("• /filter assignee <name>  : Filter tasks by a specific assignee\n")
+	b.WriteString("• /filter status <status>  : Filter tasks by a specific status\n")
+	b.WriteString("• /filter id <id>          : Filter tasks by exact ID\n")
+	b.WriteString("• /ticket <id>             : Jump directly to a ticket from anywhere (e.g. /ticket OMNI-123)\n")
+	b.WriteString("• /clear                   : Clear active filters\n\n")
+
+	b.WriteString(lipgloss.NewStyle().Bold(true).Render("Task Actions (when viewing a task)"))
+	b.WriteString("\n")
+	b.WriteString("• /status <status> : Change the ticket's status\n")
+	b.WriteString("• /points <number> : Set story points\n")
+	b.WriteString("• c                : Add a comment to the task\n\n")
+
+	b.WriteString(lipgloss.NewStyle().Bold(true).Render("Default Routing Commands"))
+	b.WriteString("\n")
+	b.WriteString("• /default set         : Save the currently highlighted Workspace, Space, or List to auto-load\n")
+	b.WriteString("• /default clear       : Clear all automatic startup routing\n")
+	b.WriteString("• /default user <name> : Set a base filter to only show tasks assigned to <name> automatically\n")
+	b.WriteString("• /default user clear  : Remove the base assignee filter\n\n")
+
+	help := "Use Up/Down to scroll | Press q or esc to close"
+	b.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext).Render(help))
+	m.vp.SetContent(b.String())
+}
+
 func (m *AppModel) View() string {
 	if m.width == 0 {
 		return "Starting..."
@@ -860,6 +923,8 @@ func (m *AppModel) View() string {
 	case stateTeams, stateSpaces, stateLists, stateTasks:
 		mainContent = m.activeList.View()
 	case stateTaskDetail:
+		mainContent = m.vp.View()
+	case stateHelp:
 		mainContent = m.vp.View()
 	case stateComment:
 		mainContent = m.vp.View() + "\n\n" + m.commentInput.View() + "\n(Enter to submit, Esc to cancel)"
