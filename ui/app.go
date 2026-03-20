@@ -181,6 +181,45 @@ func InitialModel() *AppModel {
 		vp:           vp,
 	}
 	m.activeList = &m.teamsList
+	
+	// Hydrate deep trees if configs are present
+	if cfg.ClickupTeamID != "" {
+		m.selectedTeam = cfg.ClickupTeamID
+		spaces, err := c.GetSpaces(cfg.ClickupTeamID)
+		if err == nil {
+			m.allSpaces = spaces
+			var sItems []list.Item
+			for _, s := range spaces { sItems = append(sItems, spaceItem(s)) }
+			m.spacesList.SetItems(sItems)
+			m.state = stateSpaces
+			m.activeList = &m.spacesList
+			
+			if cfg.ClickupSpaceID != "" {
+				m.selectedSpace = cfg.ClickupSpaceID
+				lists, err := c.GetSpaceLists(cfg.ClickupSpaceID)
+				if err == nil {
+					m.allLists = lists
+					var lItems []list.Item
+					for _, l := range lists { lItems = append(lItems, listItem(l)) }
+					m.listsList.SetItems(lItems)
+					m.state = stateLists
+					m.activeList = &m.listsList
+					
+					if cfg.ClickupListID != "" {
+						m.selectedList = cfg.ClickupListID
+						tasks, err := c.GetTasks(cfg.ClickupListID)
+						if err == nil {
+							m.allTasks = tasks
+							m.applyTaskFilter("")
+							m.state = stateTasks
+							m.activeList = &m.tasksList
+						}
+					}
+				}
+			}
+		}
+	}
+	
 	return m
 }
 
@@ -310,6 +349,11 @@ func (m *AppModel) updateCommandSuggestions() {
 	sugs = append(sugs, Suggestion{"/clear", "Clear active list filters"})
 	sugs = append(sugs, Suggestion{"/help", "Show help documentation"})
 	sugs = append(sugs, Suggestion{"/ticket ", "Open a ticket directly by ID"})
+	
+	if m.prevState == stateTeams || m.prevState == stateSpaces || m.prevState == stateLists {
+		sugs = append(sugs, Suggestion{"/default set", "Set the currently highlighted item as your default routing"})
+	}
+	sugs = append(sugs, Suggestion{"/default clear", "Clear all default automatic routing"})
 	
 	if m.prevState == stateTasks && len(m.allTasks) > 0 {
 		sugs = append(sugs, Suggestion{"/filter assignee", "Filter by a specific assignee"})
@@ -698,6 +742,35 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.applyHierarchyFilter(strings.TrimPrefix(m.cmdInput.Value(), "/filter "))
 					}
 				}
+			} else if strings.HasPrefix(val, "/default set") {
+				switch m.prevState {
+				case stateTeams:
+					if i, ok := m.activeList.SelectedItem().(teamItem); ok {
+						m.cfg.ClickupTeamID = i.ID
+						m.cfg.ClickupSpaceID = ""
+						m.cfg.ClickupListID = ""
+						config.SaveConfig(m.cfg)
+					}
+				case stateSpaces:
+					if i, ok := m.activeList.SelectedItem().(spaceItem); ok {
+						m.cfg.ClickupSpaceID = i.ID
+						m.cfg.ClickupTeamID = m.selectedTeam
+						m.cfg.ClickupListID = ""
+						config.SaveConfig(m.cfg)
+					}
+				case stateLists:
+					if i, ok := m.activeList.SelectedItem().(listItem); ok {
+						m.cfg.ClickupListID = i.ID
+						m.cfg.ClickupSpaceID = m.selectedSpace
+						m.cfg.ClickupTeamID = m.selectedTeam
+						config.SaveConfig(m.cfg)
+					}
+				}
+			} else if strings.HasPrefix(val, "/default clear") {
+				m.cfg.ClickupTeamID = ""
+				m.cfg.ClickupSpaceID = ""
+				m.cfg.ClickupListID = ""
+				config.SaveConfig(m.cfg)
 			}
 			return m, nil
 		case tea.KeyEsc:
