@@ -29,6 +29,8 @@ const (
 	stateComment
 	stateCommand
 	stateHelp
+	stateCreateTask
+	stateMovePicker
 )
 
 // Item Wrappers
@@ -102,6 +104,7 @@ type AppModel struct {
 	allTasks     []clickup.Task
 
 	commentInput textinput.Model
+	taskInput    textinput.Model // used for create / rename
 	cmdInput     textinput.Model
 	vp           viewport.Model
 	width        int
@@ -114,8 +117,10 @@ type AppModel struct {
 	selectedTeam  string
 	selectedSpace string
 	selectedList  string
-	selectedTask  clickup.Task
-	taskHistory   []clickup.Task
+	selectedTask       clickup.Task
+	taskHistory        []clickup.Task
+	moveCandidateLists []clickup.List
+	moveTaskID         string
 	
 	loading    bool
 	loadingMsg string
@@ -131,6 +136,8 @@ type tasksMsg []clickup.Task
 type taskDetailMsg *clickup.Task
 type errMsg error
 type clearPopupMsg struct{}
+type taskCreatedMsg clickup.Task
+type moveListsReadyMsg []clickup.List
 
 func fetchSpacesCmd(c *clickup.Client, teamID string) tea.Cmd {
 	return func() tea.Msg {
@@ -161,6 +168,22 @@ func fetchTaskCmd(c *clickup.Client, taskID, teamID string) tea.Cmd {
 		task, err := c.GetTask(taskID, teamID)
 		if err != nil { return errMsg(err) }
 		return taskDetailMsg(task)
+	}
+}
+
+func createTaskCmd(c *clickup.Client, listID, name string) tea.Cmd {
+	return func() tea.Msg {
+		task, err := c.CreateTask(listID, name)
+		if err != nil { return errMsg(err) }
+		return taskCreatedMsg(*task)
+	}
+}
+
+func fetchAllListsForMoveCmd(c *clickup.Client, spaceID string) tea.Cmd {
+	return func() tea.Msg {
+		lists, err := c.GetSpaceLists(spaceID)
+		if err != nil { return errMsg(err) }
+		return moveListsReadyMsg(lists)
 	}
 }
 
@@ -211,6 +234,11 @@ func InitialModel() *AppModel {
 	cmd.CharLimit = 156
 	cmd.Width = 50
 
+	// create a separate textinput for task creation
+	ti := textinput.New()
+	ti.Placeholder = "Task name..."
+	ti.CharLimit = 200
+
 	vp := viewport.New(0, 0)
 	vp.Style = DetailStyle
 
@@ -229,6 +257,7 @@ func InitialModel() *AppModel {
 		tasksList:    tasksList,
 		allTeams:     allTeams,
 		commentInput: ci,
+		taskInput:    ti,
 		cmdInput:     cmd,
 		vp:           vp,
 		spinner:      s,
@@ -363,6 +392,23 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.state = stateTaskDetail
 		m.updateViewportContent()
 		return m, nil
+	case taskCreatedMsg:
+		m.loading = false
+		newTask := clickup.Task(msg)
+		// Prepend so it appears at the top of the list
+		m.allTasks = append([]clickup.Task{newTask}, m.allTasks...)
+		m.applyTaskFilter("")
+		// Navigate directly into the new ticket
+		m.selectedTask = newTask
+		m.taskHistory = nil
+		m.state = stateTaskDetail
+		m.updateViewportContent()
+		return m, nil
+	case moveListsReadyMsg:
+		m.loading = false
+		m.moveCandidateLists = []clickup.List(msg)
+		m.state = stateMovePicker
+		return m, nil
 	case errMsg:
 		m.loading = false
 		m.err = msg
@@ -389,6 +435,10 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateCommand(msg)
 	case stateHelp:
 		return m.updateHelp(msg)
+	case stateCreateTask:
+		return m.updateCreateTask(msg)
+	case stateMovePicker:
+		return m.updateMovePicker(msg)
 	}
 
 	return m, tea.Batch(cmds...)
@@ -470,6 +520,8 @@ func (m *AppModel) updateCommandSuggestions() {
 		sugs = append(sugs, Suggestion{"/status ", "Change ticket status"})
 		sugs = append(sugs, Suggestion{"/points ", "Set Story Points (e.g. /points 3)"})
 		sugs = append(sugs, Suggestion{"/share", "Copy ticket URL to clipboard"})
+		sugs = append(sugs, Suggestion{"/delete", "Delete this ticket permanently"})
+		sugs = append(sugs, Suggestion{"/move", "Move this ticket to another list"})
 		
 		statuses := make(map[string]bool)
 		for _, t := range m.allTasks {
@@ -638,6 +690,13 @@ func (m *AppModel) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.activeList = &m.teamsList
 			}
 			return m, nil
+		case "a", "n":
+			if m.state == stateTasks {
+				m.state = stateCreateTask
+				m.taskInput.SetValue("")
+				m.taskInput.Focus()
+				return m, textinput.Blink
+			}
 		case "enter", "right":
 			switch m.state {
 			case stateTeams:
@@ -744,6 +803,60 @@ func (m *AppModel) updateComment(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.commentInput, cmd = m.commentInput.Update(msg)
 	return m, cmd
+}
+
+func (m *AppModel) updateCreateTask(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.Type {
+		case tea.KeyEnter:
+			name := strings.TrimSpace(m.taskInput.Value())
+			if name != "" {
+				m.taskInput.Blur()
+				m.state = stateTasks
+				m.loading = true
+				m.loadingMsg = "Creating task..."
+				return m, tea.Batch(m.spinner.Tick, createTaskCmd(m.client, m.selectedList, name))
+			}
+		case tea.KeyEsc:
+			m.taskInput.Blur()
+			m.state = stateTasks
+			return m, nil
+		}
+	}
+	var cmd tea.Cmd
+	m.taskInput, cmd = m.taskInput.Update(msg)
+	return m, cmd
+}
+
+func (m *AppModel) updateMovePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "esc", "q":
+			m.state = stateTaskDetail
+			m.updateViewportContent()
+			return m, nil
+		case "up", "k":
+			if m.suggestIdx > 0 { m.suggestIdx-- }
+			return m, nil
+		case "down", "j":
+			if m.suggestIdx < len(m.moveCandidateLists)-1 { m.suggestIdx++ }
+			return m, nil
+		case "enter":
+			if m.suggestIdx < len(m.moveCandidateLists) {
+				destList := m.moveCandidateLists[m.suggestIdx]
+				m.state = stateTaskDetail
+				m.loading = true
+				m.loadingMsg = "Moving task to " + destList.Name + "..."
+				taskID := m.moveTaskID
+				return m, tea.Batch(m.spinner.Tick, func() tea.Msg {
+					return errMsg(m.client.MoveTask(taskID, destList.ID))
+				})
+			}
+		}
+	}
+	return m, nil
 }
 
 func (m *AppModel) updateHelp(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -864,6 +977,34 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, tea.Tick(time.Second*1, func(_ time.Time) tea.Msg {
 						return clearPopupMsg{}
 					})
+				}
+			} else if strings.HasPrefix(val, "/delete") {
+				if m.prevState == stateTaskDetail {
+					taskID := m.selectedTask.ID
+					m.loading = true
+					m.loadingMsg = "Deleting task..."
+					m.state = stateTasks
+					return m, tea.Batch(m.spinner.Tick, func() tea.Msg {
+						if err := m.client.DeleteTask(taskID); err != nil {
+							return errMsg(err)
+						}
+						// Remove from local cache
+						var kept []clickup.Task
+						for _, t := range m.allTasks {
+							if t.ID != taskID { kept = append(kept, t) }
+						}
+						m.allTasks = kept
+						m.applyTaskFilter("")
+						return tasksMsg(m.allTasks)
+					})
+				}
+			} else if strings.HasPrefix(val, "/move") {
+				if m.prevState == stateTaskDetail {
+					m.moveTaskID = m.selectedTask.ID
+					m.suggestIdx = 0
+					m.loading = true
+					m.loadingMsg = "Loading available lists..."
+					return m, tea.Batch(m.spinner.Tick, fetchAllListsForMoveCmd(m.client, m.selectedSpace))
 				}
 			} else if strings.HasPrefix(val, "/default set") {
 				switch m.prevState {
@@ -1026,8 +1167,23 @@ func (m *AppModel) View() string {
 		mainContent = m.vp.View()
 	case stateComment:
 		mainContent = m.vp.View() + "\n\n" + m.commentInput.View() + "\n(Enter to submit, Esc to cancel)"
+	case stateCreateTask:
+		mainContent = m.activeList.View() + "\n\n" + lipgloss.NewStyle().Bold(true).Render("New Task: ") + m.taskInput.View() + "\n" + lipgloss.NewStyle().Foreground(ColorSubtext).Render("Enter to create | Esc to cancel")
+	case stateMovePicker:
+		var sb strings.Builder
+		sb.WriteString(TitleStyle.Render("Move Ticket To List") + "\n\n")
+		for i, l := range m.moveCandidateLists {
+			if i == m.suggestIdx {
+				sb.WriteString(lipgloss.NewStyle().Foreground(ColorSecondary).Bold(true).Render("> " + l.Name))
+			} else {
+				sb.WriteString(lipgloss.NewStyle().Foreground(ColorText).Render("  " + l.Name))
+			}
+			sb.WriteString("\n")
+		}
+		sb.WriteString("\n" + lipgloss.NewStyle().Foreground(ColorSubtext).Render("Up/Down to select | Enter to move | Esc to cancel"))
+		mainContent = sb.String()
 	case stateCommand:
-		if m.prevState == stateTaskDetail {
+		if m.prevState == stateTaskDetail || m.prevState == stateHelp {
 			mainContent = m.vp.View()
 		} else {
 			mainContent = m.activeList.View()

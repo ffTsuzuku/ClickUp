@@ -246,3 +246,33 @@ func (c *Client) UpdatePoints(taskID string, points float64) error {
 	_, err := c.doReq("PUT", endpoint, body)
 	return err
 }
+
+// CreateTask creates a new task in a given list
+func (c *Client) CreateTask(listID, name string) (*Task, error) {
+	endpoint := fmt.Sprintf("/list/%s/task", listID)
+	reqBody := map[string]interface{}{"name": name}
+	body, _ := json.Marshal(reqBody)
+	data, err := c.doReq("POST", endpoint, body)
+	if err != nil {
+		return nil, err
+	}
+	var task Task
+	if err := json.Unmarshal(data, &task); err != nil {
+		return nil, err
+	}
+	return &task, nil
+}
+
+// DeleteTask deletes a task by ID
+func (c *Client) DeleteTask(taskID string) error {
+	endpoint := fmt.Sprintf("/task/%s", taskID)
+	_, err := c.doReq("DELETE", endpoint, nil)
+	return err
+}
+
+// MoveTask moves a task to a different list
+func (c *Client) MoveTask(taskID, destListID string) error {
+	endpoint := fmt.Sprintf("/list/%s/task/%s", destListID, taskID)
+	_, err := c.doReq("POST", endpoint, nil)
+	return err
+}
