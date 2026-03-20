@@ -111,6 +111,7 @@ type AppModel struct {
 	selectedSpace string
 	selectedList  string
 	selectedTask  clickup.Task
+	taskHistory   []clickup.Task
 	
 	err error
 }
@@ -253,11 +254,25 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
+func (m *AppModel) getSubtasks(parentID string) []clickup.Task {
+	var res []clickup.Task
+	for _, t := range m.allTasks {
+		if t.Parent != nil {
+			parentStr, ok := t.Parent.(string)
+			if ok && parentStr == parentID {
+				res = append(res, t)
+			}
+		}
+	}
+	return res
+}
+
 func (m *AppModel) loadTasksAndSwitch(listID string) {
 	m.selectedList = listID
 	tasks, err := m.client.GetTasks(m.selectedList)
 	if err == nil {
 		m.allTasks = tasks
+		m.taskHistory = nil
 		m.applyTaskFilter("") 
 		m.state = stateTasks
 		m.activeList = &m.tasksList
@@ -406,6 +421,10 @@ func (m *AppModel) applyTaskFilter(query string) {
 	query = strings.ToLower(strings.TrimSpace(query))
 	
 	for _, t := range m.allTasks {
+		if t.Parent != nil {
+			continue // Hide subtasks from the main root list view
+		}
+		
 		if query == "" {
 			items = append(items, taskItem(t))
 			continue
@@ -475,7 +494,6 @@ func (m *AppModel) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.activeList = &m.teamsList
 			}
 			return m, nil
-			
 		case "enter", "right":
 			switch m.state {
 			case stateTeams:
@@ -511,6 +529,7 @@ func (m *AppModel) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case stateTasks:
 				if i, ok := m.activeList.SelectedItem().(taskItem); ok {
 					m.selectedTask = clickup.Task(i)
+					m.taskHistory = nil
 					m.state = stateTaskDetail
 					m.updateViewportContent()
 				}
@@ -529,12 +548,27 @@ func (m *AppModel) updateDetail(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "esc", "q", "left":
-			m.state = stateTasks
+			if len(m.taskHistory) > 0 {
+				m.selectedTask = m.taskHistory[len(m.taskHistory)-1]
+				m.taskHistory = m.taskHistory[:len(m.taskHistory)-1]
+				m.updateViewportContent()
+			} else {
+				m.state = stateTasks
+			}
 			return m, nil
 		case "c":
 			m.state = stateComment
 			m.commentInput.Focus()
 			return m, textinput.Blink
+		case "1", "2", "3", "4", "5", "6", "7", "8", "9":
+			subtasks := m.getSubtasks(m.selectedTask.ID)
+			idx := int(msg.String()[0] - '1')
+			if idx >= 0 && idx < len(subtasks) {
+				m.taskHistory = append(m.taskHistory, m.selectedTask)
+				m.selectedTask = subtasks[idx]
+				m.updateViewportContent()
+			}
+			return m, nil
 		}
 	}
 	var cmd tea.Cmd
@@ -672,24 +706,35 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *AppModel) updateViewportContent() {
 	var b strings.Builder
 	
-	b.WriteString(TitleStyle.Render(fmt.Sprintf("[%s] %s", m.selectedTask.Status.Status, m.selectedTask.Name)))
-	b.WriteString("\n\n")
+	b.WriteString(TitleStyle.Render(fmt.Sprintf("[%s] %s", m.selectedTask.Status.Status, m.selectedTask.Name)) + "\n\n")
 	
 	assignee := "Unassigned"
 	if len(m.selectedTask.Assignees) > 0 { assignee = m.selectedTask.Assignees[0].Username }
-	b.WriteString(lipgloss.NewStyle().Bold(true).Render("Assignee: "))
-	b.WriteString(assignee)
-	b.WriteString("\n\n")
+	b.WriteString(lipgloss.NewStyle().Bold(true).Render("Assignee: ") + assignee + "\n\n")
 	
-	b.WriteString(lipgloss.NewStyle().Bold(true).Render("Description:\n"))
-	b.WriteString(m.selectedTask.Desc)
-	b.WriteString("\n\n")
+	b.WriteString(lipgloss.NewStyle().Bold(true).Render("Description:") + "\n")
+	b.WriteString(m.selectedTask.Desc + "\n\n")
 	
 	pts := "0"
 	if m.selectedTask.Points != nil { pts = fmt.Sprintf("%v", *m.selectedTask.Points) }
-	b.WriteString(lipgloss.NewStyle().Bold(true).Render(fmt.Sprintf("Story Points: %s\n\n", pts)))
+	b.WriteString(lipgloss.NewStyle().Bold(true).Render("Story Points: ") + pts + "\n\n")
 	
-	help := lipgloss.NewStyle().Foreground(ColorSubtext).Render("q/esc/left: back | c: comment")
+	b.WriteString(lipgloss.NewStyle().Bold(true).Render("Subtasks:") + "\n")
+	subtasks := m.getSubtasks(m.selectedTask.ID)
+	if len(subtasks) > 0 {
+		for i, t := range subtasks {
+			id := t.ID
+			if t.CustomID != "" {
+				id = t.CustomID
+			}
+			b.WriteString(fmt.Sprintf("%d. [%s] %s (%s)\n", i+1, id, t.Name, t.Status.Status))
+		}
+	} else {
+		b.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext).Render("No subtasks."))
+	}
+	b.WriteString("\n\n")
+
+	help := lipgloss.NewStyle().Foreground(ColorSubtext).Render("q/esc/left: back | c: comment | 1-9: traverse subtasks")
 	b.WriteString(help)
 
 	m.vp.SetContent(b.String())

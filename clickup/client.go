@@ -161,15 +161,16 @@ type Task struct {
 	ID          string     `json:"id"`
 	CustomID    string     `json:"custom_id"`
 	Name        string     `json:"name"`
-	Desc        string     `json:"description"`
-	Status      TaskStatus `json:"status"`
-	Assignees   []Assignee `json:"assignees"`
-	URL         string     `json:"url"`
-	Points      *float64   `json:"points"`
+	Desc        string      `json:"description"`
+	Status      TaskStatus  `json:"status"`
+	Assignees   []Assignee  `json:"assignees"`
+	URL         string      `json:"url"`
+	Points      *float64    `json:"points"`
+	Parent      interface{} `json:"parent,omitempty"`
 }
 
 func (c *Client) GetTasks(listID string) ([]Task, error) {
-	endpoint := fmt.Sprintf("/list/%s/task", listID)
+	endpoint := fmt.Sprintf("/list/%s/task?subtasks=true", listID)
 	data, err := c.doReq("GET", endpoint, nil)
 	if err != nil {
 		return nil, err
