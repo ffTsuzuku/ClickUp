@@ -121,6 +121,7 @@ type AppModel struct {
 	taskHistory        []clickup.Task
 	moveCandidateLists []clickup.List
 	moveTaskID         string
+	teamMembers        []clickup.Member
 	
 	loading    bool
 	loadingMsg string
@@ -138,6 +139,7 @@ type errMsg error
 type clearPopupMsg struct{}
 type taskCreatedMsg clickup.Task
 type moveListsReadyMsg []clickup.List
+type teamMembersMsg []clickup.Member
 
 func fetchSpacesCmd(c *clickup.Client, teamID string) tea.Cmd {
 	return func() tea.Msg {
@@ -184,6 +186,14 @@ func fetchAllListsForMoveCmd(c *clickup.Client, spaceID string) tea.Cmd {
 		lists, err := c.GetSpaceLists(spaceID)
 		if err != nil { return errMsg(err) }
 		return moveListsReadyMsg(lists)
+	}
+}
+
+func fetchTeamMembersCmd(c *clickup.Client, teamID string) tea.Cmd {
+	return func() tea.Msg {
+		members, err := c.GetTeamMembers(teamID)
+		if err != nil { return errMsg(err) }
+		return teamMembersMsg(members)
 	}
 }
 
@@ -352,6 +362,10 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cmdInput.SetCursor(len(m.cmdInput.Value()))
 			m.updateCommandSuggestions()
 			m.updateLayout()
+			// Lazily fetch team members for /assign suggestions
+			if m.state == stateCommand && m.prevState == stateTaskDetail && len(m.teamMembers) == 0 && m.selectedTeam != "" {
+				return m, tea.Batch(textinput.Blink, fetchTeamMembersCmd(m.client, m.selectedTeam))
+			}
 			return m, textinput.Blink
 		}
 		
@@ -408,6 +422,11 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = false
 		m.moveCandidateLists = []clickup.List(msg)
 		m.state = stateMovePicker
+		return m, nil
+	case teamMembersMsg:
+		m.loading = false
+		m.teamMembers = []clickup.Member(msg)
+		// Re-open the command prompt so user can continue typing /assign
 		return m, nil
 	case errMsg:
 		m.loading = false
@@ -522,6 +541,24 @@ func (m *AppModel) updateCommandSuggestions() {
 		sugs = append(sugs, Suggestion{"/share", "Copy ticket URL to clipboard"})
 		sugs = append(sugs, Suggestion{"/delete", "Delete this ticket permanently"})
 		sugs = append(sugs, Suggestion{"/move", "Move this ticket to another list"})
+		sugs = append(sugs, Suggestion{"/assign ", "Change assignee (e.g. /assign deep)"})
+
+		// Suggest all known workspace members
+		for _, member := range m.teamMembers {
+			sugs = append(sugs, Suggestion{"/assign " + strings.ToLower(member.User.Username), "Assign to " + member.User.Username})
+		}
+		if len(m.teamMembers) == 0 {
+			// Fall back to cached task assignees until member list is loaded
+			seenUsers := make(map[string]bool)
+			for _, t := range m.allTasks {
+				for _, a := range t.Assignees {
+					if !seenUsers[a.Username] {
+						seenUsers[a.Username] = true
+						sugs = append(sugs, Suggestion{"/assign " + strings.ToLower(a.Username), "Assign to " + a.Username})
+					}
+				}
+			}
+		}
 		
 		statuses := make(map[string]bool)
 		for _, t := range m.allTasks {
@@ -1005,6 +1042,51 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.loading = true
 					m.loadingMsg = "Loading available lists..."
 					return m, tea.Batch(m.spinner.Tick, fetchAllListsForMoveCmd(m.client, m.selectedSpace))
+				}
+			} else if strings.HasPrefix(val, "/assign ") {
+				if m.prevState == stateTaskDetail {
+					// Kick off background member fetch if not already done
+					if len(m.teamMembers) == 0 && m.selectedTeam != "" {
+						go func() {}() // no-op, fetch happens below
+					}
+					username := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(val, "/assign ")))
+					// Look up in team members first, then fall back to task cache
+					var addID int
+					for _, m2 := range m.teamMembers {
+						if strings.ToLower(m2.User.Username) == username {
+							addID = m2.User.ID
+							break
+						}
+					}
+					if addID == 0 {
+						// Fallback: search task cache
+						for _, t := range m.allTasks {
+							for _, a := range t.Assignees {
+								if strings.ToLower(a.Username) == username {
+									addID = a.ID
+								}
+							}
+						}
+					}
+					if addID != 0 {
+						var removes []int
+						for _, a := range m.selectedTask.Assignees {
+							if a.ID != addID { removes = append(removes, a.ID) }
+						}
+						taskID := m.selectedTask.ID
+						newAssignee := clickup.Assignee{ID: addID, Username: username}
+						if err := m.client.UpdateAssignees(taskID, []int{addID}, removes); err == nil {
+							m.selectedTask.Assignees = []clickup.Assignee{newAssignee}
+							for i, t := range m.allTasks {
+								if t.ID == taskID {
+									m.allTasks[i].Assignees = []clickup.Assignee{newAssignee}
+									break
+								}
+							}
+							m.updateViewportContent()
+							m.applyTaskFilter("")
+						}
+					}
 				}
 			} else if strings.HasPrefix(val, "/default set") {
 				switch m.prevState {

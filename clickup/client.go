@@ -155,7 +155,26 @@ type TaskStatus struct {
 }
 
 type Assignee struct {
+	ID       int    `json:"id"`
 	Username string `json:"username"`
+}
+
+type Member struct {
+	User struct {
+		ID       int    `json:"id"`
+		Username string `json:"username"`
+	} `json:"user"`
+}
+
+func (c *Client) GetTeamMembers(teamID string) ([]Member, error) {
+	endpoint := fmt.Sprintf("/team/%s/member", teamID)
+	data, err := c.doReq("GET", endpoint, nil)
+	if err != nil { return nil, err }
+	var result struct {
+		Members []Member `json:"members"`
+	}
+	if err := json.Unmarshal(data, &result); err != nil { return nil, err }
+	return result.Members, nil
 }
 
 type Task struct {
@@ -274,5 +293,25 @@ func (c *Client) DeleteTask(taskID string) error {
 func (c *Client) MoveTask(taskID, destListID string) error {
 	endpoint := fmt.Sprintf("/list/%s/task/%s", destListID, taskID)
 	_, err := c.doReq("POST", endpoint, nil)
+	return err
+}
+
+// UpdateAssignees replaces the assignees on a task.
+// addIDs are user IDs to add; removeIDs are user IDs to remove.
+func (c *Client) UpdateAssignees(taskID string, addIDs []int, removeIDs []int) error {
+	endpoint := fmt.Sprintf("/task/%s", taskID)
+	reqBody := map[string]interface{}{}
+	if len(addIDs) > 0 {
+		reqBody["assignees"] = map[string]interface{}{"add": addIDs}
+	}
+	if len(removeIDs) > 0 {
+		if _, ok := reqBody["assignees"]; ok {
+			reqBody["assignees"].(map[string]interface{})["rem"] = removeIDs
+		} else {
+			reqBody["assignees"] = map[string]interface{}{"rem": removeIDs}
+		}
+	}
+	body, _ := json.Marshal(reqBody)
+	_, err := c.doReq("PUT", endpoint, body)
 	return err
 }
