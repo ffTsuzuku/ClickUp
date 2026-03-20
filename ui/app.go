@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/bubbles/list"
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -114,7 +115,49 @@ type AppModel struct {
 	selectedTask  clickup.Task
 	taskHistory   []clickup.Task
 	
+	loading    bool
+	loadingMsg string
+	spinner    spinner.Model
+	
 	err error
+}
+
+type spacesMsg []clickup.Space
+type listsMsg []clickup.List
+type tasksMsg []clickup.Task
+type taskDetailMsg *clickup.Task
+type errMsg error
+
+func fetchSpacesCmd(c *clickup.Client, teamID string) tea.Cmd {
+	return func() tea.Msg {
+		spaces, err := c.GetSpaces(teamID)
+		if err != nil { return errMsg(err) }
+		return spacesMsg(spaces)
+	}
+}
+
+func fetchListsCmd(c *clickup.Client, spaceID string) tea.Cmd {
+	return func() tea.Msg {
+		lists, err := c.GetSpaceLists(spaceID)
+		if err != nil { return errMsg(err) }
+		return listsMsg(lists)
+	}
+}
+
+func fetchTasksCmd(c *clickup.Client, listID string) tea.Cmd {
+	return func() tea.Msg {
+		tasks, err := c.GetTasks(listID)
+		if err != nil { return errMsg(err) }
+		return tasksMsg(tasks)
+	}
+}
+
+func fetchTaskCmd(c *clickup.Client, taskID, teamID string) tea.Cmd {
+	return func() tea.Msg {
+		task, err := c.GetTask(taskID, teamID)
+		if err != nil { return errMsg(err) }
+		return taskDetailMsg(task)
+	}
 }
 
 func InitialModel() *AppModel {
@@ -167,6 +210,10 @@ func InitialModel() *AppModel {
 	vp := viewport.New(0, 0)
 	vp.Style = DetailStyle
 
+	s := spinner.New()
+	s.Spinner = spinner.Dot
+	s.Style = lipgloss.NewStyle().Foreground(ColorPrimary)
+
 	m := &AppModel{
 		state:        stateTeams,
 		prevState:    stateTeams,
@@ -180,6 +227,7 @@ func InitialModel() *AppModel {
 		commentInput: ci,
 		cmdInput:     cmd,
 		vp:           vp,
+		spinner:      s,
 	}
 	m.activeList = &m.teamsList
 	
@@ -225,7 +273,7 @@ func InitialModel() *AppModel {
 }
 
 func (m *AppModel) Init() tea.Cmd {
-	return nil
+	return m.spinner.Tick
 }
 
 func (m *AppModel) updateLayout() {
@@ -278,6 +326,49 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.updateLayout()
+	case spacesMsg:
+		m.loading = false
+		m.allSpaces = msg
+		var items []list.Item
+		for _, s := range msg { items = append(items, spaceItem(s)) }
+		m.spacesList.SetItems(items)
+		m.state = stateSpaces
+		m.activeList = &m.spacesList
+		return m, nil
+	case listsMsg:
+		m.loading = false
+		m.allLists = msg
+		var items []list.Item
+		for _, l := range msg { items = append(items, listItem(l)) }
+		m.listsList.SetItems(items)
+		m.state = stateLists
+		m.activeList = &m.listsList
+		return m, nil
+	case tasksMsg:
+		m.loading = false
+		m.allTasks = msg
+		m.taskHistory = nil
+		m.applyTaskFilter("")
+		m.state = stateTasks
+		m.activeList = &m.tasksList
+		return m, nil
+	case taskDetailMsg:
+		m.loading = false
+		m.selectedTask = *msg
+		m.taskHistory = nil
+		m.state = stateTaskDetail
+		m.updateViewportContent()
+		return m, nil
+	case errMsg:
+		m.loading = false
+		m.err = msg
+		return m, nil
+	}
+	
+	if m.loading {
+		var cmd tea.Cmd
+		m.spinner, cmd = m.spinner.Update(msg)
+		cmds = append(cmds, cmd)
 	}
 
 	switch m.state {
@@ -307,18 +398,6 @@ func (m *AppModel) getSubtasks(parentID string) []clickup.Task {
 		}
 	}
 	return res
-}
-
-func (m *AppModel) loadTasksAndSwitch(listID string) {
-	m.selectedList = listID
-	tasks, err := m.client.GetTasks(m.selectedList)
-	if err == nil {
-		m.allTasks = tasks
-		m.taskHistory = nil
-		m.applyTaskFilter("") 
-		m.state = stateTasks
-		m.activeList = &m.tasksList
-	}
 }
 
 func (m *AppModel) filterSuggestions() {
@@ -556,32 +635,23 @@ func (m *AppModel) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case stateTeams:
 				if i, ok := m.activeList.SelectedItem().(teamItem); ok {
 					m.selectedTeam = i.ID
-					spaces, _ := m.client.GetSpaces(m.selectedTeam)
-					m.allSpaces = spaces
-					var items []list.Item
-					for _, s := range spaces {
-						items = append(items, spaceItem(s))
-					}
-					m.spacesList.SetItems(items)
-					m.state = stateSpaces
-					m.activeList = &m.spacesList
+					m.loading = true
+					m.loadingMsg = "Loading spaces..."
+					return m, tea.Batch(m.spinner.Tick, fetchSpacesCmd(m.client, m.selectedTeam))
 				}
 			case stateSpaces:
 				if i, ok := m.activeList.SelectedItem().(spaceItem); ok {
 					m.selectedSpace = i.ID
-					lists, _ := m.client.GetSpaceLists(m.selectedSpace)
-					m.allLists = lists
-					var items []list.Item
-					for _, l := range lists {
-						items = append(items, listItem(l))
-					}
-					m.listsList.SetItems(items)
-					m.state = stateLists
-					m.activeList = &m.listsList
+					m.loading = true
+					m.loadingMsg = "Loading lists..."
+					return m, tea.Batch(m.spinner.Tick, fetchListsCmd(m.client, m.selectedSpace))
 				}
 			case stateLists:
 				if i, ok := m.activeList.SelectedItem().(listItem); ok {
-					m.loadTasksAndSwitch(i.ID)
+					m.selectedList = i.ID
+					m.loading = true
+					m.loadingMsg = "Loading tasks..."
+					return m, tea.Batch(m.spinner.Tick, fetchTasksCmd(m.client, m.selectedList))
 				}
 			case stateTasks:
 				if i, ok := m.activeList.SelectedItem().(taskItem); ok {
@@ -749,13 +819,9 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if teamID == "" && len(m.allTeams) > 0 {
 						teamID = m.allTeams[0].ID
 					}
-					task, err := m.client.GetTask(id, teamID)
-					if err == nil && task != nil {
-						m.selectedTask = *task
-						m.taskHistory = nil
-						m.state = stateTaskDetail
-						m.updateViewportContent()
-					}
+					m.loading = true
+					m.loadingMsg = "Loading ticket " + id + "..."
+					return m, tea.Batch(m.spinner.Tick, fetchTaskCmd(m.client, id, teamID))
 				}
 			} else if strings.HasPrefix(val, "/points ") {
 				if m.prevState == stateTaskDetail {
@@ -915,6 +981,11 @@ func (m *AppModel) updateHelpContent() {
 func (m *AppModel) View() string {
 	if m.width == 0 {
 		return "Starting..."
+	}
+	
+	if m.loading {
+		loadingBox := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(1, 4).Render(fmt.Sprintf("%s %s", m.spinner.View(), m.loadingMsg))
+		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, loadingBox)
 	}
 
 	var mainContent string
