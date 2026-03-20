@@ -1063,7 +1063,16 @@ func (m *AppModel) View() string {
 	}
 
 	if m.popupMsg != "" {
-		popupStr := lipgloss.NewStyle().Foreground(ColorSecondary).Bold(true).Render("✓ " + m.popupMsg)
+		popupBox := lipgloss.NewStyle().
+			Background(lipgloss.Color("236")).
+			Foreground(ColorSecondary).
+			Bold(true).
+			Padding(0, 1).
+			Render("✓ " + m.popupMsg)
+			
+		shadow := lipgloss.NewStyle().Foreground(lipgloss.Color("234")).Render("▌")
+		popupStr := popupBox + shadow
+
 		space := m.width - lipgloss.Width(bottomBar) - lipgloss.Width(popupStr) - 2
 		if space > 0 {
 			bottomBar = bottomBar + strings.Repeat(" ", space) + popupStr
