@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -118,6 +120,7 @@ type AppModel struct {
 	loading    bool
 	loadingMsg string
 	spinner    spinner.Model
+	popupMsg   string
 	
 	err error
 }
@@ -127,6 +130,7 @@ type listsMsg []clickup.List
 type tasksMsg []clickup.Task
 type taskDetailMsg *clickup.Task
 type errMsg error
+type clearPopupMsg struct{}
 
 func fetchSpacesCmd(c *clickup.Client, teamID string) tea.Cmd {
 	return func() tea.Msg {
@@ -363,6 +367,9 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = false
 		m.err = msg
 		return m, nil
+	case clearPopupMsg:
+		m.popupMsg = ""
+		return m, nil
 	}
 	
 	if m.loading {
@@ -462,6 +469,7 @@ func (m *AppModel) updateCommandSuggestions() {
 	} else if m.prevState == stateTaskDetail {
 		sugs = append(sugs, Suggestion{"/status ", "Change ticket status"})
 		sugs = append(sugs, Suggestion{"/points ", "Set Story Points (e.g. /points 3)"})
+		sugs = append(sugs, Suggestion{"/share", "Copy ticket URL to clipboard"})
 		
 		statuses := make(map[string]bool)
 		for _, t := range m.allTasks {
@@ -687,6 +695,15 @@ func (m *AppModel) updateDetail(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.state = stateComment
 			m.commentInput.Focus()
 			return m, textinput.Blink
+		case "s":
+			if m.selectedTask.URL != "" {
+				clipboard.WriteAll(m.selectedTask.URL)
+				m.popupMsg = "Copied URL to Clipboard"
+				return m, tea.Tick(time.Second*1, func(_ time.Time) tea.Msg {
+					return clearPopupMsg{}
+				})
+			}
+			return m, nil
 		case "1", "2", "3", "4", "5", "6", "7", "8", "9":
 			subtasks := m.getSubtasks(m.selectedTask.ID)
 			idx := int(msg.String()[0] - '1')
@@ -840,6 +857,14 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.applyHierarchyFilter(strings.TrimPrefix(m.cmdInput.Value(), "/filter "))
 					}
 				}
+			} else if strings.HasPrefix(val, "/share") {
+				if m.prevState == stateTaskDetail && m.selectedTask.URL != "" {
+					clipboard.WriteAll(m.selectedTask.URL)
+					m.popupMsg = "Copied URL to Clipboard"
+					return m, tea.Tick(time.Second*1, func(_ time.Time) tea.Msg {
+						return clearPopupMsg{}
+					})
+				}
 			} else if strings.HasPrefix(val, "/default set") {
 				switch m.prevState {
 				case stateTeams:
@@ -932,7 +957,7 @@ func (m *AppModel) updateViewportContent() {
 	}
 	b.WriteString("\n\n")
 
-	help := lipgloss.NewStyle().Foreground(ColorSubtext).Render("q/esc/left: back | c: comment | 1-9: traverse subtasks")
+	help := lipgloss.NewStyle().Foreground(ColorSubtext).Render("q/esc/left: back | c: comment | s: copy link | 1-9: traverse subtasks")
 	b.WriteString(help)
 
 	m.vp.SetContent(b.String())
@@ -964,7 +989,9 @@ func (m *AppModel) updateHelpContent() {
 	b.WriteString("\n")
 	b.WriteString("• /status <status> : Change the ticket's status\n")
 	b.WriteString("• /points <number> : Set story points\n")
-	b.WriteString("• c                : Add a comment to the task\n\n")
+	b.WriteString("• /share           : Copy ticket URL to clipboard\n")
+	b.WriteString("• c                : Add a comment to the task\n")
+	b.WriteString("• s                : Copy ticket URL to clipboard\n\n")
 
 	b.WriteString(lipgloss.NewStyle().Bold(true).Render("Default Routing Commands"))
 	b.WriteString("\n")
@@ -1033,6 +1060,16 @@ func (m *AppModel) View() string {
 	bottomBar := m.cmdInput.View() + sb.String()
 	if m.state != stateCommand {
 		bottomBar = lipgloss.NewStyle().Foreground(ColorSubtext).Render("Type / to enter command")
+	}
+
+	if m.popupMsg != "" {
+		popupStr := lipgloss.NewStyle().Foreground(ColorSecondary).Bold(true).Render("✓ " + m.popupMsg)
+		space := m.width - lipgloss.Width(bottomBar) - lipgloss.Width(popupStr) - 2
+		if space > 0 {
+			bottomBar = bottomBar + strings.Repeat(" ", space) + popupStr
+		} else {
+			bottomBar = bottomBar + " " + popupStr
+		}
 	}
 
 	fullUI := mainContent + "\n\n" + bottomBar
