@@ -40,6 +40,7 @@ const (
 	stateEditDesc
 	stateCreateSubtask
 	stateEditComment
+	stateConfirmProfileDelete
 )
 
 // Item Wrappers
@@ -379,6 +380,7 @@ type AppModel struct {
 	editingCommentID string
 	replyToCommentID string
 	replyToUser      string
+	pendingDeleteProfile string
 	currentUser      string
 	currentUserID    int
 	activeProfile    string
@@ -1078,6 +1080,8 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateCreateSubtask(msg)
 	case stateEditComment:
 		return m.updateEditComment(msg)
+	case stateConfirmProfileDelete:
+		return m.updateConfirmProfileDelete(msg)
 	}
 
 	return m, tea.Batch(cmds...)
@@ -1210,6 +1214,7 @@ func (m *AppModel) updateCommandSuggestions() {
 	sugs = append(sugs, Suggestion{"/profile token ", "Set the API key for the active profile"})
 	for _, profileName := range m.cfg.ProfileNames() {
 		sugs = append(sugs, Suggestion{"/profile switch " + profileName, "Switch to profile " + profileName})
+		sugs = append(sugs, Suggestion{"/profile delete " + profileName, "Delete profile " + profileName})
 	}
 	sugs = append(sugs, Suggestion{"/search status:in progress", "Search tickets filtered by status"})
 	sugs = append(sugs, Suggestion{"/search assignee:deep api", "Search tickets filtered by assignee plus text"})
@@ -1832,6 +1837,43 @@ func (m *AppModel) updateHelp(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+func (m *AppModel) updateConfirmProfileDelete(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch strings.ToLower(msg.String()) {
+		case "y", "enter":
+			name := m.pendingDeleteProfile
+			wasActive := m.cfg.ActiveProfileName() == name
+			nextProfile, ok := m.cfg.DeleteProfile(name)
+			m.pendingDeleteProfile = ""
+			if !ok {
+				m.state = m.prevState
+				m.popupMsg = "Error: failed to delete profile"
+				return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+			}
+			if err := config.SaveConfig(m.cfg); err != nil {
+				m.state = m.prevState
+				m.popupMsg = "Error: failed to save profile deletion"
+				return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+			}
+			if wasActive {
+				m.loading = true
+				m.loadingMsg = "Switching to profile " + nextProfile + "..."
+				return m, tea.Batch(m.spinner.Tick, reloadProfileCmd(m.cfg, m.width, m.height, "Deleted profile "+name))
+			}
+			m.state = m.prevState
+			m.popupMsg = "Deleted profile " + name
+			return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+		case "n", "esc", "q":
+			m.pendingDeleteProfile = ""
+			m.state = m.prevState
+			m.popupMsg = "Profile deletion cancelled"
+			return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+		}
+	}
+	return m, nil
+}
+
 func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
@@ -1939,37 +1981,18 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.loadingMsg = "Switching to profile " + name + "..."
 				return m, tea.Batch(m.spinner.Tick, reloadProfileCmd(m.cfg, m.width, m.height, "Switched profile to "+name))
 			} else if strings.HasPrefix(val, "/profile delete ") {
-				args := strings.Fields(strings.TrimSpace(strings.TrimPrefix(val, "/profile delete ")))
-				if len(args) == 0 {
+				name := strings.TrimSpace(strings.TrimPrefix(val, "/profile delete "))
+				if name == "" {
 					m.popupMsg = "Error: profile name required"
 					return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
 				}
-				name := args[0]
 				if !m.cfg.HasProfile(name) {
 					m.popupMsg = "Error: profile not found"
 					return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
 				}
-				if len(args) != 3 || args[1] != "confirm" || args[2] != name {
-					m.popupMsg = "Confirm with: /profile delete " + name + " confirm " + name
-					return m, tea.Tick(time.Second*4, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
-				}
-				wasActive := m.cfg.ActiveProfileName() == name
-				nextProfile, ok := m.cfg.DeleteProfile(name)
-				if !ok {
-					m.popupMsg = "Error: failed to delete profile"
-					return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
-				}
-				if err := config.SaveConfig(m.cfg); err != nil {
-					m.popupMsg = "Error: failed to save profile deletion"
-					return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
-				}
-				if wasActive {
-					m.loading = true
-					m.loadingMsg = "Switching to profile " + nextProfile + "..."
-					return m, tea.Batch(m.spinner.Tick, reloadProfileCmd(m.cfg, m.width, m.height, "Deleted profile "+name))
-				}
-				m.popupMsg = "Deleted profile " + name
-				return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+				m.pendingDeleteProfile = name
+				m.state = stateConfirmProfileDelete
+				return m, nil
 			} else if strings.HasPrefix(val, "/profile save ") {
 				name := strings.TrimSpace(strings.TrimPrefix(val, "/profile save "))
 				if name == "" {
@@ -2541,7 +2564,7 @@ func (m *AppModel) updateHelpContent() {
 	b.WriteString("• /profile list            : Show available profiles\n")
 	b.WriteString("• /profile create <name>   : Create a new empty profile and switch to it\n")
 	b.WriteString("• /profile switch <name>   : Switch to a saved profile\n")
-	b.WriteString("• /profile delete <name> confirm <name> : Delete a profile after typed confirmation\n")
+	b.WriteString("• /profile delete <name>   : Delete a profile with a yes/no confirmation prompt\n")
 	b.WriteString("• /profile save <name>     : Save current settings as a profile and switch to it\n")
 	b.WriteString("• /profile token <key>     : Set the API key for the active profile\n")
 	b.WriteString("• /clear                   : Clear active filters\n\n")
@@ -2698,6 +2721,17 @@ func (m *AppModel) View() string {
 		mainContent = m.renderEditDesc()
 	case stateEditComment:
 		mainContent = m.vp.View() + "\n\n" + TitleStyle.Render("Editing Comment:") + "\n" + m.commentInput.View() + "\n(Ctrl+S to save, Ctrl+E for Vim, Esc to cancel)"
+	case stateConfirmProfileDelete:
+		box := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(ColorBorder).
+			Padding(1, 2).
+			Render(
+				TitleStyle.Render("Delete Profile?") + "\n\n" +
+					fmt.Sprintf("Delete profile %q?", m.pendingDeleteProfile) + "\n\n" +
+					lipgloss.NewStyle().Foreground(ColorSubtext).Render("y/enter: yes • n/esc: no"),
+			)
+		mainContent = lipgloss.Place(m.width, m.height-8, lipgloss.Center, lipgloss.Center, box)
 	case stateCommand:
 		if m.prevState == stateTaskDetail || m.prevState == stateHelp {
 			mainContent = m.vp.View()
