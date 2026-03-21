@@ -766,6 +766,7 @@ func (m *AppModel) updateCommandSuggestions() {
 		sugs = append(sugs, Suggestion{"/editext", "Edit description in $EDITOR (vim etc)"})
 		sugs = append(sugs, Suggestion{"/subtask", "Add a subtask to this ticket"})
 		sugs = append(sugs, Suggestion{"/attach open ", "Open an attachment in your browser by number (e.g. /attach open 1)"})
+		sugs = append(sugs, Suggestion{"/attach share ", "Copy an attachment URL to your clipboard by number (e.g. /attach share 1)"})
 		sugs = append(sugs, Suggestion{"/comment edit ", "Edit a comment by its number (e.g. /comment edit 1)"})
 		sugs = append(sugs, Suggestion{"/comment delete ", "Delete a comment by its number (e.g. /comment delete 1)"})
 
@@ -1430,17 +1431,26 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.taskInput.Focus()
 					return m, textinput.Blink
 				}
-			} else if strings.HasPrefix(val, "/attach open ") {
+			} else if strings.HasPrefix(val, "/attach ") {
 				if m.prevState == stateTaskDetail {
-					ptStr := strings.TrimPrefix(val, "/attach open ")
-					idx, err := strconv.Atoi(ptStr)
-					if err == nil && idx > 0 && idx <= len(m.selectedTask.Attachments) {
-						url := m.selectedTask.Attachments[idx-1].URL
-						m.popupMsg = "Opening in Browser..."
-						return m, tea.Batch(
-							openAttachmentURLCmd(url),
-							tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} }),
-						)
+					parts := strings.Fields(val)
+					if len(parts) >= 3 {
+						idx, err := strconv.Atoi(parts[2])
+						if err == nil && idx > 0 && idx <= len(m.selectedTask.Attachments) {
+							url := m.selectedTask.Attachments[idx-1].URL
+							action := strings.ToLower(parts[1])
+							if action == "open" {
+								m.popupMsg = "Opening in Browser..."
+								return m, tea.Batch(
+									openAttachmentURLCmd(url),
+									tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} }),
+								)
+							} else if action == "share" {
+								clipboard.WriteAll(url)
+								m.popupMsg = "Copied Attachment URL!"
+								return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+							}
+						}
 					}
 				}
 			} else if strings.HasPrefix(val, "/comment ") {
