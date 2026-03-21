@@ -138,6 +138,7 @@ type AppModel struct {
 	err error
 }
 
+type teamsMsg []clickup.Team
 type spacesMsg []clickup.Space
 type listsMsg []clickup.List
 type tasksMsg []clickup.Task
@@ -148,6 +149,14 @@ type taskCreatedMsg clickup.Task
 type moveListsReadyMsg []clickup.List
 type teamMembersMsg []clickup.Member
 type editorFinishedMsg struct{ content string; err error }
+
+func fetchTeamsCmd(c *clickup.Client) tea.Cmd {
+	return func() tea.Msg {
+		teams, err := c.GetTeams()
+		if err != nil { return errMsg(err) }
+		return teamsMsg(teams)
+	}
+}
 
 func fetchSpacesCmd(c *clickup.Client, teamID string) tea.Cmd {
 	return func() tea.Msg {
@@ -486,6 +495,15 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = false
 		m.teamMembers = []clickup.Member(msg)
 		return m, nil
+	case teamsMsg:
+		m.loading = false
+		var items []list.Item
+		m.allTeams = []clickup.Team(msg)
+		for _, t := range m.allTeams {
+			items = append(items, teamItem(t))
+		}
+		m.teamsList.SetItems(items)
+		return m, nil
 	case editorFinishedMsg:
 		if msg.err == nil && msg.content != m.selectedTask.Desc {
 			desc := strings.TrimRight(msg.content, "\n")
@@ -815,6 +833,22 @@ func (m *AppModel) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.taskInput.Focus()
 				return m, textinput.Blink
 			}
+		case "r":
+			m.loading = true
+			switch m.state {
+			case stateTeams:
+				m.loadingMsg = "Refreshing teams..."
+				return m, tea.Batch(m.spinner.Tick, fetchTeamsCmd(m.client))
+			case stateSpaces:
+				m.loadingMsg = "Refreshing spaces..."
+				return m, tea.Batch(m.spinner.Tick, fetchSpacesCmd(m.client, m.selectedTeam))
+			case stateLists:
+				m.loadingMsg = "Refreshing lists..."
+				return m, tea.Batch(m.spinner.Tick, fetchListsCmd(m.client, m.selectedSpace))
+			case stateTasks:
+				m.loadingMsg = "Refreshing tasks..."
+				return m, tea.Batch(m.spinner.Tick, fetchTasksCmd(m.client, m.selectedList))
+			}
 		case "enter", "right":
 			switch m.state {
 			case stateTeams:
@@ -904,6 +938,10 @@ func (m *AppModel) updateDetail(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.updateViewportContent()
 			}
 			return m, nil
+		case "r":
+			m.loading = true
+			m.loadingMsg = "Refreshing task..."
+			return m, tea.Batch(m.spinner.Tick, fetchTaskCmd(m.client, m.selectedTask.ID, m.selectedTeam))
 		}
 	}
 	var cmd tea.Cmd
@@ -1348,7 +1386,8 @@ func (m *AppModel) updateViewportContent() {
 	}
 	b.WriteString("\n\n")
 
-	help := lipgloss.NewStyle().Foreground(ColorSubtext).Render("q/esc/left: back | c: comment | s: copy link | 1-9: traverse subtasks")
+	b.WriteString("\n\n")
+	help := lipgloss.NewStyle().Foreground(ColorSubtext).Render("q: back | c: comment | e: edit desc | E: vim edit | t: subtask | s: copy | r: refresh")
 	b.WriteString(help)
 
 	m.vp.SetContent(b.String())
@@ -1381,15 +1420,30 @@ func (m *AppModel) updateHelpContent() {
 	b.WriteString("• /status <status> : Change the ticket's status\n")
 	b.WriteString("• /points <number> : Set story points\n")
 	b.WriteString("• /share           : Copy ticket URL to clipboard\n")
-	b.WriteString("• c                : Add a comment to the task\n")
-	b.WriteString("• s                : Copy ticket URL to clipboard\n\n")
+	b.WriteString("• /delete          : Delete this ticket permanently\n")
+	b.WriteString("• /move            : Move this ticket to another list\n")
+	b.WriteString("• /assign <user>   : Assign the ticket to a user\n")
+	b.WriteString("• /desc            : Edit description (inline)\n")
+	b.WriteString("• /editext         : Edit description in external $EDITOR\n")
+	b.WriteString("• /subtask         : Create a new subtask\n")
+	b.WriteString("• c                : Add a comment\n")
+	b.WriteString("• e                : Edit description (inline)\n")
+	b.WriteString("• E                : Edit description in external $EDITOR\n")
+	b.WriteString("• t                : Create a new subtask\n")
+	b.WriteString("• s                : Copy ticket URL to clipboard\n")
+	b.WriteString("• r                : Refresh current view from API\n\n")
+
+	b.WriteString(lipgloss.NewStyle().Bold(true).Render("List Actions"))
+	b.WriteString("\n")
+	b.WriteString("• a / n            : Create a new task (in Tasks view)\n")
+	b.WriteString("• r                : Refresh the current list\n\n")
 
 	b.WriteString(lipgloss.NewStyle().Bold(true).Render("Default Routing Commands"))
 	b.WriteString("\n")
-	b.WriteString("• /default set         : Save the currently highlighted Workspace, Space, or List to auto-load\n")
-	b.WriteString("• /default clear       : Clear all automatic startup routing\n")
-	b.WriteString("• /default user <name> : Set a base filter to only show tasks assigned to <name> automatically\n")
-	b.WriteString("• /default user clear  : Remove the base assignee filter\n\n")
+	b.WriteString("• /default set         : Save currently highlighted Workspace/Space/List\n")
+	b.WriteString("• /default clear       : Clear automatic startup routing\n")
+	b.WriteString("• /default user <name> : Set base assignee filter\n")
+	b.WriteString("• /default user clear  : Remove base assignee filter\n\n")
 
 	help := "Use Up/Down to scroll | Press q or esc to close"
 	b.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext).Render(help))
