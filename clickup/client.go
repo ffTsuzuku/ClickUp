@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 )
 
@@ -220,7 +221,24 @@ type Task struct {
 	MarkdownDescription string `json:"markdown_description"`
 }
 
+var escapedMarkdownCharRE = regexp.MustCompile(`\\+([*_` + "`" + `~\[\]\(\)#>!\-\+\|])`)
+
+func unescapeMarkdownText(s string) string {
+	if s == "" || !strings.Contains(s, `\`) {
+		return s
+	}
+	for {
+		next := escapedMarkdownCharRE.ReplaceAllString(s, "$1")
+		if next == s {
+			return s
+		}
+		s = next
+	}
+}
+
 func normalizeTask(task *Task) {
+	task.Desc = unescapeMarkdownText(task.Desc)
+	task.MarkdownDescription = unescapeMarkdownText(task.MarkdownDescription)
 	if task.MarkdownDescription != "" {
 		task.Desc = task.MarkdownDescription
 	}
