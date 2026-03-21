@@ -1390,9 +1390,10 @@ func (m *AppModel) updateViewportContent() {
 		id = m.selectedTask.CustomID
 	}
 	
+	// Title & Status
 	b.WriteString(TitleStyle.Render(fmt.Sprintf("[%s] %s", id, m.selectedTask.Name)) + "\n")
-	b.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext).Render("Status: "+m.selectedTask.Status.Status) + "\n\n")
-
+	b.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext).Render("Status: "+m.selectedTask.Status.Status))
+	
 	if m.selectedTask.Parent != nil {
 		parentID := *m.selectedTask.Parent
 		for _, t := range m.allTasks {
@@ -1401,12 +1402,16 @@ func (m *AppModel) updateViewportContent() {
 				break
 			}
 		}
-		b.WriteString(lipgloss.NewStyle().Bold(true).Render("Parent Task: ") + parentID + "\n\n")
+		b.WriteString(LabelStyle.Render(" | Parent: ") + ColorSecondaryStyle.Render(parentID))
 	}
+	b.WriteString("\n\n")
 	
+	divider := lipgloss.NewStyle().Foreground(ColorBorder).Render(strings.Repeat("─", m.width-10))
+	b.WriteString(divider + "\n\n")
+
+	// Metadata
 	assignee := "Unassigned"
 	if len(m.selectedTask.Assignees) > 0 { assignee = m.selectedTask.Assignees[0].Username }
-	b.WriteString(lipgloss.NewStyle().Bold(true).Render("Assignee: ") + assignee + "\n")
 	
 	priority := "None"
 	if m.selectedTask.Priority != nil {
@@ -1415,16 +1420,28 @@ func (m *AppModel) updateViewportContent() {
 		if pColor == "" { pColor = "#6e7681" }
 		priority = lipgloss.NewStyle().Foreground(lipgloss.Color(pColor)).Bold(true).Render(strings.ToUpper(p.Priority))
 	}
-	b.WriteString(lipgloss.NewStyle().Bold(true).Render("Priority: ") + priority + "\n\n")
-	
-	b.WriteString(lipgloss.NewStyle().Bold(true).Render("Description:") + "\n")
-	b.WriteString(m.selectedTask.Desc + "\n\n")
 	
 	pts := "0"
 	if m.selectedTask.Points != nil { pts = fmt.Sprintf("%v", *m.selectedTask.Points) }
-	b.WriteString(lipgloss.NewStyle().Bold(true).Render("Story Points: ") + pts + "\n\n")
+
+	b.WriteString(LabelStyle.Width(15).Render("Assignee:") + assignee + "\n")
+	b.WriteString(LabelStyle.Width(15).Render("Priority:") + priority + "\n")
+	b.WriteString(LabelStyle.Width(15).Render("Story Points:") + pts + "\n\n")
 	
-	b.WriteString(lipgloss.NewStyle().Bold(true).Render("Subtasks:") + "\n")
+	b.WriteString(divider + "\n\n")
+
+	// Description
+	b.WriteString(SectionHeaderStyle.Render("DESCRIPTION") + "\n")
+	if m.selectedTask.Desc == "" {
+		b.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext).Italic(true).Render("No description provided.") + "\n\n")
+	} else {
+		b.WriteString(m.selectedTask.Desc + "\n\n")
+	}
+	
+	b.WriteString(divider + "\n\n")
+
+	// Subtasks
+	b.WriteString(SectionHeaderStyle.Render("SUBTASKS") + "\n")
 	subtasks := m.getSubtasks(m.selectedTask.ID)
 	if len(subtasks) > 0 {
 		for i, t := range subtasks {

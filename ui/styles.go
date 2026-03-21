@@ -34,4 +34,7 @@ var (
 	StatusInProgressStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#f1e05a"))
 	StatusDoneStyle = lipgloss.NewStyle().Foreground(ColorSecondary)
 	ColorSecondaryStyle = lipgloss.NewStyle().Foreground(ColorSecondary).Bold(true)
+	
+	SectionHeaderStyle = lipgloss.NewStyle().Foreground(ColorPrimary).Bold(true)
+	LabelStyle         = lipgloss.NewStyle().Foreground(ColorSubtext)
 )
