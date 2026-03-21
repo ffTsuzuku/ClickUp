@@ -56,7 +56,7 @@ func (t listItem) Description() string { return "List" }
 func (t listItem) FilterValue() string { return t.Name }
 
 type folderItem clickup.Folder
-func (f folderItem) Title() string       { return "📁 " + f.Name }
+func (f folderItem) Title() string       { return f.Name }
 func (f folderItem) Description() string { return "Folder" }
 func (f folderItem) FilterValue() string { return f.Name }
 
@@ -164,6 +164,8 @@ type AppModel struct {
 	
 	selectedComments []clickup.Comment
 	editingCommentID string
+	replyToCommentID string
+	replyToUser      string
 	currentUser      string
 	currentUserID    int
 	err error
@@ -262,9 +264,9 @@ func fetchAllListsForMoveCmd(c *clickup.Client, spaceID string) tea.Cmd {
 	}
 }
 
-func addCommentCmd(c *clickup.Client, taskID, comment string) tea.Cmd {
+func addCommentCmd(c *clickup.Client, taskID, comment, parentID string) tea.Cmd {
 	return func() tea.Msg {
-		if err := c.AddComment(taskID, comment); err != nil {
+		if err := c.AddComment(taskID, comment, parentID); err != nil {
 			return errMsg(err)
 		}
 		return commentAddedMsg{}
@@ -664,13 +666,15 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else if m.state == stateComment {
 				m.loading = true
 				m.loadingMsg = "Adding comment..."
-				cmds = append(cmds, tea.Batch(m.spinner.Tick, addCommentCmd(m.client, m.selectedTask.ID, content)))
+				cmds = append(cmds, tea.Batch(m.spinner.Tick, addCommentCmd(m.client, m.selectedTask.ID, content, m.replyToCommentID)))
 			}
 		}
 		m.state = stateTaskDetail
 		m.updateViewportContent()
 		return m, tea.Batch(cmds...)
 	case commentAddedMsg:
+		m.replyToCommentID = ""
+		m.replyToUser = ""
 		m.popupMsg = "Comment added!"
 		return m, tea.Batch(
 			fetchCommentsCmd(m.client, m.selectedTask.ID),
@@ -811,6 +815,7 @@ func (m *AppModel) updateCommandSuggestions() {
 		sugs = append(sugs, Suggestion{"/attach share ", "Copy an attachment URL to your clipboard by number (e.g. /attach share 1)"})
 		sugs = append(sugs, Suggestion{"/comment edit ", "Edit a comment by its number (e.g. /comment edit 1)"})
 		sugs = append(sugs, Suggestion{"/comment delete ", "Delete a comment by its number (e.g. /comment delete 1)"})
+		sugs = append(sugs, Suggestion{"/comment reply ", "Reply to a comment by its number (e.g. /comment reply 1)"})
 
 		// Suggest all known workspace members
 		for _, member := range m.teamMembers {
@@ -1170,7 +1175,7 @@ func (m *AppModel) updateComment(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.commentInput.Blur()
 				m.loading = true
 				m.loadingMsg = "Adding comment..."
-				return m, tea.Batch(m.spinner.Tick, addCommentCmd(m.client, m.selectedTask.ID, v))
+				return m, tea.Batch(m.spinner.Tick, addCommentCmd(m.client, m.selectedTask.ID, v, m.replyToCommentID))
 			}
 			return m, nil
 		case "ctrl+e":
@@ -1531,6 +1536,12 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 								m.commentInput.SetValue(comment.CommentText)
 								m.commentInput.Focus()
 								return m, textinput.Blink
+							} else if action == "reply" {
+								m.replyToCommentID = comment.ID
+								m.replyToUser = comment.User.Username
+								m.state = stateComment
+								m.commentInput.Focus()
+								return m, nil
 							}
 						}
 					}
@@ -1897,7 +1908,11 @@ func (m *AppModel) View() string {
 	case stateHelp:
 		mainContent = m.vp.View()
 	case stateComment:
-		mainContent = m.vp.View() + "\n\n" + TitleStyle.Render("Adding Comment:") + "\n" + m.commentInput.View() + "\n(Ctrl+S to submit, Ctrl+E for Vim, Esc to cancel)"
+		header := TitleStyle.Render("Adding Comment:")
+		if m.replyToUser != "" {
+			header = TitleStyle.Render(fmt.Sprintf("Replying to %s:", m.replyToUser))
+		}
+		mainContent = m.vp.View() + "\n\n" + header + "\n" + m.commentInput.View() + "\n(Ctrl+S to submit, Ctrl+E for Vim, Esc to cancel)"
 	case stateCreateTask:
 		mainContent = m.activeList.View() + "\n\n" + lipgloss.NewStyle().Bold(true).Render("New Task: ") + m.taskInput.View() + "\n" + lipgloss.NewStyle().Foreground(ColorSubtext).Render("Enter to create | Esc to cancel")
 	case stateCreateSubtask:

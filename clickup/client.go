@@ -253,13 +253,16 @@ func (c *Client) GetTask(taskID string, teamID string) (*Task, error) {
 }
 
 // AddComment is a mock for now (requires view task detail parsing or specific endpoint)
-func (c *Client) AddComment(taskID, comment string) error {
+func (c *Client) AddComment(taskID, comment, parentID string) error {
 	// Real ClickUp Create Comment endpoint is POST /task/{task_id}/comment
 	endpoint := fmt.Sprintf("/task/%s/comment", taskID)
 	
 	reqBody := map[string]interface{}{
 		"comment_text": comment,
 		"notify_all":   true,
+	}
+	if parentID != "" {
+		reqBody["parent"] = parentID
 	}
 	body, _ := json.Marshal(reqBody)
 	
