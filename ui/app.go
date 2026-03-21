@@ -144,33 +144,8 @@ type Suggestion struct {
 	Desc string
 }
 
-func bootstrapModel(cfg *config.Config) *AppModel {
-	c := clickup.NewClient(cfg.ClickupAPIKey)
-	hasAuth := cfg.ClickupAPIKey != "" && cfg.ClickupAPIKey != "NO_TOKEN"
-
-	currentUser := "Unauthenticated"
-	currentUserID := 0
-	if hasAuth {
-		u, err := c.GetUser()
-		if err == nil {
-			currentUser = u.Username
-			currentUserID = u.ID
-		}
-	}
-
-	var allTeams []clickup.Team
-	var items []list.Item
-	if hasAuth {
-		teams, err := c.GetTeams()
-		if err == nil {
-			allTeams = teams
-			for _, t := range teams {
-				items = append(items, teamItem(t))
-			}
-		}
-	}
-
-	teamsList := list.New(items, list.NewDefaultDelegate(), 0, 0)
+func newBaseModel(cfg *config.Config) *AppModel {
+	teamsList := list.New(nil, list.NewDefaultDelegate(), 0, 0)
 	teamsList.Title = "Select Workspace"
 	teamsList.SetShowStatusBar(false)
 	teamsList.SetFilteringEnabled(false)
@@ -228,13 +203,12 @@ func bootstrapModel(cfg *config.Config) *AppModel {
 		state:         stateTeams,
 		prevState:     stateTeams,
 		cfg:           cfg,
-		client:        c,
+		client:        clickup.NewClient(cfg.ClickupAPIKey),
 		teamsList:     teamsList,
 		spacesList:    spacesList,
 		listsList:     listsList,
 		tasksList:     tasksList,
 		searchList:    searchList,
-		allTeams:      allTeams,
 		commentInput:  ci,
 		taskInput:     ti,
 		descInput:     da,
@@ -242,86 +216,117 @@ func bootstrapModel(cfg *config.Config) *AppModel {
 		vp:            vp,
 		renderer:      r,
 		spinner:       s,
-		currentUser:   currentUser,
-		currentUserID: currentUserID,
+		currentUser:   "Unauthenticated",
+		currentUserID: 0,
 		activeProfile: cfg.ActiveProfileName(),
 	}
 	m.activeList = &m.teamsList
+	return m
+}
 
-	if hasAuth && cfg.ClickupTeamID != "" {
-		m.selectedTeam = cfg.ClickupTeamID
-		spaces, err := c.GetSpaces(cfg.ClickupTeamID)
-		if err == nil {
-			m.allSpaces = spaces
-			var sItems []list.Item
-			for _, s := range spaces {
-				sItems = append(sItems, spaceItem(s))
-			}
-			m.spacesList.SetItems(sItems)
-			m.state = stateSpaces
-			m.activeList = &m.spacesList
+func hydrateModelDefaults(m *AppModel) error {
+	cfg := m.cfg
+	c := m.client
+	if cfg.ClickupTeamID == "" {
+		return nil
+	}
 
-			if cfg.ClickupSpaceID != "" {
-				m.selectedSpace = cfg.ClickupSpaceID
-				hierarchy, err := c.GetSpaceLists(cfg.ClickupSpaceID)
-				if err == nil {
-					m.allFolders = hierarchy.Folders
-					m.allLists = hierarchy.Lists
-					m.selectedFolder = nil
-					var lItems []list.Item
-					for _, f := range m.allFolders {
-						lItems = append(lItems, folderItem(f))
-					}
-					for _, l := range m.allLists {
-						lItems = append(lItems, listItem(l))
-					}
-					m.listsList.SetItems(lItems)
-					m.state = stateLists
-					m.activeList = &m.listsList
+	m.selectedTeam = cfg.ClickupTeamID
+	spaces, err := c.GetSpaces(cfg.ClickupTeamID)
+	if err != nil {
+		return err
+	}
+	m.allSpaces = spaces
+	var sItems []list.Item
+	for _, s := range spaces {
+		sItems = append(sItems, spaceItem(s))
+	}
+	m.spacesList.SetItems(sItems)
+	m.state = stateSpaces
+	m.activeList = &m.spacesList
 
-					if cfg.ClickupFolderID != "" {
-						for _, f := range m.allFolders {
-							if f.ID == cfg.ClickupFolderID {
-								m.selectedFolder = &f
-								var items []list.Item
-								for _, l := range f.Lists {
-									items = append(items, listItem(l))
-								}
-								m.listsList.SetItems(items)
-								break
-							}
-						}
-					}
+	if cfg.ClickupSpaceID == "" {
+		return nil
+	}
 
-					if cfg.ClickupListID != "" {
-						m.selectedList = cfg.ClickupListID
-						tasks, err := c.GetTasks(cfg.ClickupListID)
-						if err == nil {
-							m.allTasks = tasks
-							m.applyTaskFilter("")
-							m.state = stateTasks
-							m.activeList = &m.tasksList
-						}
-					}
+	m.selectedSpace = cfg.ClickupSpaceID
+	hierarchy, err := c.GetSpaceLists(cfg.ClickupSpaceID)
+	if err != nil {
+		return err
+	}
+	m.allFolders = hierarchy.Folders
+	m.allLists = hierarchy.Lists
+	m.selectedFolder = nil
+	var lItems []list.Item
+	for _, f := range m.allFolders {
+		lItems = append(lItems, folderItem(f))
+	}
+	for _, l := range m.allLists {
+		lItems = append(lItems, listItem(l))
+	}
+	m.listsList.SetItems(lItems)
+	m.state = stateLists
+	m.activeList = &m.listsList
+
+	if cfg.ClickupFolderID != "" {
+		for _, f := range m.allFolders {
+			if f.ID == cfg.ClickupFolderID {
+				m.selectedFolder = &f
+				var items []list.Item
+				for _, l := range f.Lists {
+					items = append(items, listItem(l))
 				}
+				m.listsList.SetItems(items)
+				break
 			}
 		}
 	}
 
+	if cfg.ClickupListID == "" {
+		return nil
+	}
+
+	m.selectedList = cfg.ClickupListID
+	tasks, err := c.GetTasks(cfg.ClickupListID)
+	if err != nil {
+		return err
+	}
+	m.allTasks = tasks
+	m.applyTaskFilter("")
+	m.state = stateTasks
+	m.activeList = &m.tasksList
+	return nil
+}
+
+func bootstrapModel(cfg *config.Config) *AppModel {
+	m := newBaseModel(cfg)
+	hasAuth := cfg.ClickupAPIKey != "" && cfg.ClickupAPIKey != "NO_TOKEN"
+	if !hasAuth {
+		return m
+	}
+
+	u, err := m.client.GetUser()
+	if err == nil {
+		m.currentUser = u.Username
+		m.currentUserID = u.ID
+	}
+
+	teams, err := m.client.GetTeams()
+	if err == nil {
+		m.allTeams = teams
+		var items []list.Item
+		for _, t := range teams {
+			items = append(items, teamItem(t))
+		}
+		m.teamsList.SetItems(items)
+	}
+
+	_ = hydrateModelDefaults(m)
 	return m
 }
 
 func reloadProfileCmd(cfg *config.Config, width, height int, popup string) tea.Cmd {
-	return func() tea.Msg {
-		reloaded := bootstrapModel(cfg)
-		reloaded.width = width
-		reloaded.height = height
-		reloaded.updateLayout()
-		return profileReloadMsg{
-			Model: reloaded,
-			Popup: popup,
-		}
-	}
+	return func() tea.Msg { return profileReloadStartMsg{Cfg: cfg, Width: width, Height: height, Popup: popup} }
 }
 
 type AppModel struct {
@@ -401,6 +406,22 @@ type errMsg error
 type clearPopupMsg struct{}
 type taskCreatedMsg clickup.Task
 type moveListsReadyMsg *clickup.SpaceHierarchy
+type profileReloadStartMsg struct {
+	Cfg    *config.Config
+	Width  int
+	Height int
+	Popup  string
+}
+type profileReloadUserMsg struct {
+	Model *AppModel
+	Popup string
+	Err   error
+}
+type profileReloadTeamsMsg struct {
+	Model *AppModel
+	Popup string
+	Err   error
+}
 type profileReloadMsg struct {
 	Model *AppModel
 	Popup string
@@ -423,6 +444,46 @@ type searchQuery struct {
 	Assignee string
 	Title    string
 	ID       string
+}
+
+func loadProfileUserCmd(m *AppModel, popup string) tea.Cmd {
+	return func() tea.Msg {
+		u, err := m.client.GetUser()
+		if err == nil {
+			m.currentUser = u.Username
+			m.currentUserID = u.ID
+		}
+		return profileReloadUserMsg{Model: m, Popup: popup, Err: err}
+	}
+}
+
+func loadProfileTeamsCmd(m *AppModel, popup string) tea.Cmd {
+	return func() tea.Msg {
+		teams, err := m.client.GetTeams()
+		if err == nil {
+			m.allTeams = teams
+			var items []list.Item
+			for _, t := range teams {
+				items = append(items, teamItem(t))
+			}
+			m.teamsList.SetItems(items)
+		}
+		return profileReloadTeamsMsg{Model: m, Popup: popup, Err: err}
+	}
+}
+
+func loadProfileDefaultsCmd(m *AppModel, popup string) tea.Cmd {
+	return func() tea.Msg {
+		err := hydrateModelDefaults(m)
+		return profileReloadMsg{Model: m, Popup: popupWithErr(popup, "loading saved defaults", err)}
+	}
+}
+
+func popupWithErr(success, phase string, err error) string {
+	if err == nil {
+		return success
+	}
+	return fmt.Sprintf("Error %s: %v", phase, err)
 }
 
 func normalizeSearchValue(s string) string {
@@ -1046,6 +1107,34 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case clearPopupMsg:
 		m.popupMsg = ""
 		return m, nil
+	case profileReloadStartMsg:
+		base := newBaseModel(msg.Cfg)
+		base.width = msg.Width
+		base.height = msg.Height
+		base.updateLayout()
+		if msg.Cfg.ClickupAPIKey == "" || msg.Cfg.ClickupAPIKey == "NO_TOKEN" {
+			base.popupMsg = msg.Popup
+			*m = *base
+			return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+		}
+		m.loadingMsg = "Authenticating with ClickUp..."
+		return m, loadProfileUserCmd(base, msg.Popup)
+	case profileReloadUserMsg:
+		if msg.Err != nil {
+			msg.Model.popupMsg = popupWithErr(msg.Popup, "authenticating profile", msg.Err)
+			*m = *msg.Model
+			return m, tea.Tick(time.Second*3, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+		}
+		m.loadingMsg = "Loading workspaces..."
+		return m, loadProfileTeamsCmd(msg.Model, msg.Popup)
+	case profileReloadTeamsMsg:
+		if msg.Err != nil {
+			msg.Model.popupMsg = popupWithErr(msg.Popup, "loading workspaces", msg.Err)
+			*m = *msg.Model
+			return m, tea.Tick(time.Second*3, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+		}
+		m.loadingMsg = "Loading saved defaults..."
+		return m, loadProfileDefaultsCmd(msg.Model, msg.Popup)
 	case profileReloadMsg:
 		msg.Model.popupMsg = msg.Popup
 		*m = *msg.Model
