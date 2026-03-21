@@ -143,6 +143,186 @@ type Suggestion struct {
 	Desc string
 }
 
+func bootstrapModel(cfg *config.Config) *AppModel {
+	c := clickup.NewClient(cfg.ClickupAPIKey)
+	hasAuth := cfg.ClickupAPIKey != "" && cfg.ClickupAPIKey != "NO_TOKEN"
+
+	currentUser := "Unauthenticated"
+	currentUserID := 0
+	if hasAuth {
+		u, err := c.GetUser()
+		if err == nil {
+			currentUser = u.Username
+			currentUserID = u.ID
+		}
+	}
+
+	var allTeams []clickup.Team
+	var items []list.Item
+	if hasAuth {
+		teams, err := c.GetTeams()
+		if err == nil {
+			allTeams = teams
+			for _, t := range teams {
+				items = append(items, teamItem(t))
+			}
+		}
+	}
+
+	teamsList := list.New(items, list.NewDefaultDelegate(), 0, 0)
+	teamsList.Title = "Select Workspace"
+	teamsList.SetShowStatusBar(false)
+	teamsList.SetFilteringEnabled(false)
+
+	spacesList := list.New(nil, list.NewDefaultDelegate(), 0, 0)
+	spacesList.Title = "Select Space"
+	spacesList.SetFilteringEnabled(false)
+
+	listsList := list.New(nil, list.NewDefaultDelegate(), 0, 0)
+	listsList.Title = "Select List"
+	listsList.SetFilteringEnabled(false)
+
+	tasksList := list.New(nil, list.NewDefaultDelegate(), 0, 0)
+	tasksList.Title = "Tasks"
+	tasksList.SetFilteringEnabled(false)
+
+	searchList := list.New(nil, list.NewDefaultDelegate(), 0, 0)
+	searchList.Title = "Search Results"
+	searchList.SetFilteringEnabled(false)
+
+	ci := textarea.New()
+	ci.Placeholder = "Enter comment..."
+	ci.SetWidth(80)
+	ci.SetHeight(5)
+
+	cmd := textinput.New()
+	cmd.Placeholder = "Enter slash command (e.g. /filter) or /help..."
+	cmd.Prompt = lipgloss.NewStyle().Foreground(ColorPrimary).Bold(true).Render("> ")
+	cmd.CharLimit = 156
+	cmd.Width = 50
+
+	ti := textinput.New()
+	ti.Placeholder = "Task name..."
+	ti.CharLimit = 200
+
+	da := textarea.New()
+	da.Placeholder = "Enter description..."
+	da.CharLimit = 5000
+	da.SetWidth(80)
+	da.SetHeight(10)
+
+	vp := viewport.New(0, 0)
+	vp.Style = DetailStyle
+
+	r, _ := glamour.NewTermRenderer(
+		glamour.WithAutoStyle(),
+		glamour.WithWordWrap(80),
+	)
+
+	s := spinner.New()
+	s.Spinner = spinner.Dot
+	s.Style = lipgloss.NewStyle().Foreground(ColorPrimary)
+
+	m := &AppModel{
+		state:         stateTeams,
+		prevState:     stateTeams,
+		cfg:           cfg,
+		client:        c,
+		teamsList:     teamsList,
+		spacesList:    spacesList,
+		listsList:     listsList,
+		tasksList:     tasksList,
+		searchList:    searchList,
+		allTeams:      allTeams,
+		commentInput:  ci,
+		taskInput:     ti,
+		descInput:     da,
+		cmdInput:      cmd,
+		vp:            vp,
+		renderer:      r,
+		spinner:       s,
+		currentUser:   currentUser,
+		currentUserID: currentUserID,
+		activeProfile: cfg.ActiveProfileName(),
+	}
+	m.activeList = &m.teamsList
+
+	if hasAuth && cfg.ClickupTeamID != "" {
+		m.selectedTeam = cfg.ClickupTeamID
+		spaces, err := c.GetSpaces(cfg.ClickupTeamID)
+		if err == nil {
+			m.allSpaces = spaces
+			var sItems []list.Item
+			for _, s := range spaces {
+				sItems = append(sItems, spaceItem(s))
+			}
+			m.spacesList.SetItems(sItems)
+			m.state = stateSpaces
+			m.activeList = &m.spacesList
+
+			if cfg.ClickupSpaceID != "" {
+				m.selectedSpace = cfg.ClickupSpaceID
+				hierarchy, err := c.GetSpaceLists(cfg.ClickupSpaceID)
+				if err == nil {
+					m.allFolders = hierarchy.Folders
+					m.allLists = hierarchy.Lists
+					m.selectedFolder = nil
+					var lItems []list.Item
+					for _, f := range m.allFolders {
+						lItems = append(lItems, folderItem(f))
+					}
+					for _, l := range m.allLists {
+						lItems = append(lItems, listItem(l))
+					}
+					m.listsList.SetItems(lItems)
+					m.state = stateLists
+					m.activeList = &m.listsList
+
+					if cfg.ClickupFolderID != "" {
+						for _, f := range m.allFolders {
+							if f.ID == cfg.ClickupFolderID {
+								m.selectedFolder = &f
+								var items []list.Item
+								for _, l := range f.Lists {
+									items = append(items, listItem(l))
+								}
+								m.listsList.SetItems(items)
+								break
+							}
+						}
+					}
+
+					if cfg.ClickupListID != "" {
+						m.selectedList = cfg.ClickupListID
+						tasks, err := c.GetTasks(cfg.ClickupListID)
+						if err == nil {
+							m.allTasks = tasks
+							m.applyTaskFilter("")
+							m.state = stateTasks
+							m.activeList = &m.tasksList
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return m
+}
+
+func reloadProfileCmd(cfg *config.Config, width, height int, popup string) tea.Cmd {
+	return func() tea.Msg {
+		reloaded := bootstrapModel(cfg)
+		reloaded.width = width
+		reloaded.height = height
+		reloaded.updateLayout()
+		return profileReloadMsg{
+			Model: reloaded,
+			Popup: popup,
+		}
+	}
+}
+
 type AppModel struct {
 	state     state
 	prevState state
@@ -201,6 +381,7 @@ type AppModel struct {
 	replyToUser      string
 	currentUser      string
 	currentUserID    int
+	activeProfile    string
 	err              error
 }
 
@@ -218,6 +399,10 @@ type errMsg error
 type clearPopupMsg struct{}
 type taskCreatedMsg clickup.Task
 type moveListsReadyMsg *clickup.SpaceHierarchy
+type profileReloadMsg struct {
+	Model *AppModel
+	Popup string
+}
 type teamMembersMsg []clickup.Member
 type commentAddedMsg struct{}
 type editorFinishedMsg struct {
@@ -637,170 +822,8 @@ func InitialModel() *AppModel {
 		fmt.Printf("Error loading config: %v\n", err)
 		cfg = &config.Config{ClickupAPIKey: "NO_TOKEN"}
 	}
-
-	c := clickup.NewClient(cfg.ClickupAPIKey)
-
-	var currentUser string = "Unauthenticated"
-	var currentUserID int = 0
-	// Fetch user identity if missing from config
-	if cfg.ClickupAPIKey != "NO_TOKEN" {
-		u, err := c.GetUser()
-		if err == nil {
-			currentUser = u.Username
-			currentUserID = u.ID
-		}
-	}
-
-	var allTeams []clickup.Team
-	var items []list.Item
-	teams, err := c.GetTeams()
-	if err == nil {
-		allTeams = teams
-		for _, t := range teams {
-			items = append(items, teamItem(t))
-		}
-	}
-
-	teamsList := list.New(items, list.NewDefaultDelegate(), 0, 0)
-	teamsList.Title = "Select Workspace"
-	teamsList.SetShowStatusBar(false)
-	teamsList.SetFilteringEnabled(false)
-
-	spacesList := list.New(nil, list.NewDefaultDelegate(), 0, 0)
-	spacesList.Title = "Select Space"
-	spacesList.SetFilteringEnabled(false)
-
-	listsList := list.New(nil, list.NewDefaultDelegate(), 0, 0)
-	listsList.Title = "Select List"
-	listsList.SetFilteringEnabled(false)
-
-	tasksList := list.New(nil, list.NewDefaultDelegate(), 0, 0)
-	tasksList.Title = "Tasks"
-	tasksList.SetFilteringEnabled(false)
-
-	searchList := list.New(nil, list.NewDefaultDelegate(), 0, 0)
-	searchList.Title = "Search Results"
-	searchList.SetFilteringEnabled(false)
-
-	ci := textarea.New()
-	ci.Placeholder = "Enter comment..."
-	ci.SetWidth(80)
-	ci.SetHeight(5)
-
-	cmd := textinput.New()
-	cmd.Placeholder = "Enter slash command (e.g. /filter) or /help..."
-	cmd.Prompt = lipgloss.NewStyle().Foreground(ColorPrimary).Bold(true).Render("> ")
-	cmd.CharLimit = 156
-	cmd.Width = 50
-
-	// create a separate textinput for task creation
-	ti := textinput.New()
-	ti.Placeholder = "Task name..."
-	ti.CharLimit = 200
-
-	// textarea for description editing
-	da := textarea.New()
-	da.Placeholder = "Enter description..."
-	da.CharLimit = 5000
-	da.SetWidth(80)
-	da.SetHeight(10)
-
-	vp := viewport.New(0, 0)
-	vp.Style = DetailStyle
-
-	r, _ := glamour.NewTermRenderer(
-		glamour.WithAutoStyle(),
-		glamour.WithWordWrap(80),
-	)
-
-	s := spinner.New()
-	s.Spinner = spinner.Dot
-	s.Style = lipgloss.NewStyle().Foreground(ColorPrimary)
-
-	m := &AppModel{
-		state:         stateTeams,
-		prevState:     stateTeams,
-		cfg:           cfg,
-		client:        c,
-		teamsList:     teamsList,
-		spacesList:    spacesList,
-		listsList:     listsList,
-		tasksList:     tasksList,
-		searchList:    searchList,
-		allTeams:      allTeams,
-		commentInput:  ci,
-		taskInput:     ti,
-		descInput:     da,
-		cmdInput:      cmd,
-		vp:            vp,
-		renderer:      r,
-		spinner:       s,
-		currentUser:   currentUser,
-		currentUserID: currentUserID,
-	}
-	m.activeList = &m.teamsList
-
-	// Hydrate deep trees if configs are present
-	if cfg.ClickupTeamID != "" {
-		m.selectedTeam = cfg.ClickupTeamID
-		spaces, err := c.GetSpaces(cfg.ClickupTeamID)
-		if err == nil {
-			m.allSpaces = spaces
-			var sItems []list.Item
-			for _, s := range spaces {
-				sItems = append(sItems, spaceItem(s))
-			}
-			m.spacesList.SetItems(sItems)
-			m.state = stateSpaces
-			m.activeList = &m.spacesList
-
-			if cfg.ClickupSpaceID != "" {
-				m.selectedSpace = cfg.ClickupSpaceID
-				hierarchy, err := c.GetSpaceLists(cfg.ClickupSpaceID)
-				if err == nil {
-					m.allFolders = hierarchy.Folders
-					m.allLists = hierarchy.Lists
-					m.selectedFolder = nil
-					var lItems []list.Item
-					for _, f := range m.allFolders {
-						lItems = append(lItems, folderItem(f))
-					}
-					for _, l := range m.allLists {
-						lItems = append(lItems, listItem(l))
-					}
-					m.listsList.SetItems(lItems)
-					m.state = stateLists
-					m.activeList = &m.listsList
-
-					if cfg.ClickupFolderID != "" {
-						for _, f := range m.allFolders {
-							if f.ID == cfg.ClickupFolderID {
-								m.selectedFolder = &f
-								var items []list.Item
-								for _, l := range f.Lists {
-									items = append(items, listItem(l))
-								}
-								m.listsList.SetItems(items)
-								break
-							}
-						}
-					}
-
-					if cfg.ClickupListID != "" {
-						m.selectedList = cfg.ClickupListID
-						tasks, err := c.GetTasks(cfg.ClickupListID)
-						if err == nil {
-							m.allTasks = tasks
-							m.applyTaskFilter("")
-							m.state = stateTasks
-							m.activeList = &m.tasksList
-						}
-					}
-				}
-			}
-		}
-	}
-
+	m := bootstrapModel(cfg)
+	m.activeProfile = cfg.ActiveProfileName()
 	return m
 }
 
@@ -1021,12 +1044,17 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case clearPopupMsg:
 		m.popupMsg = ""
 		return m, nil
+	case profileReloadMsg:
+		msg.Model.popupMsg = msg.Popup
+		*m = *msg.Model
+		return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
 	}
 
 	if m.loading {
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
 		cmds = append(cmds, cmd)
+		return m, tea.Batch(cmds...)
 	}
 
 	switch m.state {
@@ -1174,6 +1202,15 @@ func (m *AppModel) updateCommandSuggestions() {
 	sugs = append(sugs, Suggestion{"/help", "Show help documentation"})
 	sugs = append(sugs, Suggestion{"/ticket ", "Open a ticket directly by ID"})
 	sugs = append(sugs, Suggestion{"/search ", "Search tickets across the workspace"})
+	sugs = append(sugs, Suggestion{"/profile list", "List available ClickUp profiles"})
+	sugs = append(sugs, Suggestion{"/profile create ", "Create a new empty profile and switch to it"})
+	sugs = append(sugs, Suggestion{"/profile switch ", "Switch to another profile"})
+	sugs = append(sugs, Suggestion{"/profile delete ", "Delete a profile with typed confirmation"})
+	sugs = append(sugs, Suggestion{"/profile save ", "Save current settings as a named profile"})
+	sugs = append(sugs, Suggestion{"/profile token ", "Set the API key for the active profile"})
+	for _, profileName := range m.cfg.ProfileNames() {
+		sugs = append(sugs, Suggestion{"/profile switch " + profileName, "Switch to profile " + profileName})
+	}
 	sugs = append(sugs, Suggestion{"/search status:in progress", "Search tickets filtered by status"})
 	sugs = append(sugs, Suggestion{"/search assignee:deep api", "Search tickets filtered by assignee plus text"})
 
@@ -1858,6 +1895,109 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.loadingMsg = "Searching tickets..."
 					return m, tea.Batch(m.spinner.Tick, searchTasksCmd(m.client, teamID, query))
 				}
+			} else if strings.HasPrefix(val, "/profile list") {
+				names := m.cfg.ProfileNames()
+				for i, name := range names {
+					if name == m.cfg.ActiveProfileName() {
+						names[i] = "*" + name
+					}
+				}
+				m.popupMsg = "Profiles: " + strings.Join(names, ", ")
+				return m, tea.Tick(time.Second*3, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+			} else if strings.HasPrefix(val, "/profile create ") {
+				name := strings.TrimSpace(strings.TrimPrefix(val, "/profile create "))
+				if name == "" {
+					m.popupMsg = "Error: profile name required"
+					return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+				}
+				if !m.cfg.CreateProfile(name) {
+					m.popupMsg = "Error: profile already exists"
+					return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+				}
+				if err := config.SaveConfig(m.cfg); err != nil {
+					m.popupMsg = "Error: failed to create profile"
+					return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+				}
+				m.loading = true
+				m.loadingMsg = "Switching to profile " + name + "..."
+				return m, tea.Batch(m.spinner.Tick, reloadProfileCmd(m.cfg, m.width, m.height, "Created and switched to profile "+name))
+			} else if strings.HasPrefix(val, "/profile switch ") {
+				name := strings.TrimSpace(strings.TrimPrefix(val, "/profile switch "))
+				if name == "" {
+					m.popupMsg = "Error: profile name required"
+					return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+				}
+				if !m.cfg.SetActiveProfile(name) {
+					m.popupMsg = "Error: profile not found"
+					return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+				}
+				if err := config.SaveConfig(m.cfg); err != nil {
+					m.popupMsg = "Error: failed to save profile switch"
+					return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+				}
+				m.loading = true
+				m.loadingMsg = "Switching to profile " + name + "..."
+				return m, tea.Batch(m.spinner.Tick, reloadProfileCmd(m.cfg, m.width, m.height, "Switched profile to "+name))
+			} else if strings.HasPrefix(val, "/profile delete ") {
+				args := strings.Fields(strings.TrimSpace(strings.TrimPrefix(val, "/profile delete ")))
+				if len(args) == 0 {
+					m.popupMsg = "Error: profile name required"
+					return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+				}
+				name := args[0]
+				if !m.cfg.HasProfile(name) {
+					m.popupMsg = "Error: profile not found"
+					return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+				}
+				if len(args) != 3 || args[1] != "confirm" || args[2] != name {
+					m.popupMsg = "Confirm with: /profile delete " + name + " confirm " + name
+					return m, tea.Tick(time.Second*4, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+				}
+				wasActive := m.cfg.ActiveProfileName() == name
+				nextProfile, ok := m.cfg.DeleteProfile(name)
+				if !ok {
+					m.popupMsg = "Error: failed to delete profile"
+					return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+				}
+				if err := config.SaveConfig(m.cfg); err != nil {
+					m.popupMsg = "Error: failed to save profile deletion"
+					return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+				}
+				if wasActive {
+					m.loading = true
+					m.loadingMsg = "Switching to profile " + nextProfile + "..."
+					return m, tea.Batch(m.spinner.Tick, reloadProfileCmd(m.cfg, m.width, m.height, "Deleted profile "+name))
+				}
+				m.popupMsg = "Deleted profile " + name
+				return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+			} else if strings.HasPrefix(val, "/profile save ") {
+				name := strings.TrimSpace(strings.TrimPrefix(val, "/profile save "))
+				if name == "" {
+					m.popupMsg = "Error: profile name required"
+					return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+				}
+				m.cfg.SaveCurrentAsProfile(name)
+				if err := config.SaveConfig(m.cfg); err != nil {
+					m.popupMsg = "Error: failed to save profile"
+					return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+				}
+				m.loading = true
+				m.loadingMsg = "Switching to profile " + name + "..."
+				return m, tea.Batch(m.spinner.Tick, reloadProfileCmd(m.cfg, m.width, m.height, "Saved and switched to profile "+name))
+			} else if strings.HasPrefix(val, "/profile token ") {
+				token := strings.TrimSpace(strings.TrimPrefix(val, "/profile token "))
+				if token == "" {
+					m.popupMsg = "Error: API key required"
+					return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+				}
+				m.cfg.ClickupAPIKey = token
+				if err := config.SaveConfig(m.cfg); err != nil {
+					m.popupMsg = "Error: failed to save API key"
+					return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+				}
+				m.loading = true
+				m.loadingMsg = "Reloading profile " + m.cfg.ActiveProfileName() + "..."
+				return m, tea.Batch(m.spinner.Tick, reloadProfileCmd(m.cfg, m.width, m.height, "Updated API key for profile "+m.cfg.ActiveProfileName()))
 			} else if strings.HasPrefix(val, "/status ") {
 				if m.prevState == stateTaskDetail {
 					newStatus := strings.TrimPrefix(val, "/status ")
@@ -2398,6 +2538,12 @@ func (m *AppModel) updateHelpContent() {
 	b.WriteString("• /ticket <id>             : Jump directly to a ticket from anywhere (e.g. /ticket OMNI-123)\n")
 	b.WriteString("• /search <text>           : Search tickets across the workspace\n")
 	b.WriteString("• /search status:<status> assignee:<name> <text> : Search with filters\n")
+	b.WriteString("• /profile list            : Show available profiles\n")
+	b.WriteString("• /profile create <name>   : Create a new empty profile and switch to it\n")
+	b.WriteString("• /profile switch <name>   : Switch to a saved profile\n")
+	b.WriteString("• /profile delete <name> confirm <name> : Delete a profile after typed confirmation\n")
+	b.WriteString("• /profile save <name>     : Save current settings as a profile and switch to it\n")
+	b.WriteString("• /profile token <key>     : Set the API key for the active profile\n")
 	b.WriteString("• /clear                   : Clear active filters\n\n")
 
 	b.WriteString(lipgloss.NewStyle().Bold(true).Render("Task Actions (when viewing a task)"))
@@ -2460,6 +2606,7 @@ func (m *AppModel) renderHeader() string {
 
 	infoStyle := lipgloss.NewStyle().Foreground(ColorText)
 	userLine := infoStyle.Render("Signed in as: ") + ColorSecondaryStyle.Render(m.currentUser)
+	profileLine := infoStyle.Render("Profile: ") + ColorSecondaryStyle.Render(m.activeProfile)
 
 	workspace := "None"
 	if m.selectedTeam != "" {
@@ -2472,7 +2619,7 @@ func (m *AppModel) renderHeader() string {
 	}
 	workspaceLine := infoStyle.Render("Workspace: ") + ColorSecondaryStyle.Render(workspace)
 
-	headerInfo := fmt.Sprintf("\n  %s  %s\n\n  %s\n  %s", logo, version, userLine, workspaceLine)
+	headerInfo := fmt.Sprintf("\n  %s  %s\n\n  %s\n  %s\n  %s", logo, version, profileLine, userLine, workspaceLine)
 
 	return lipgloss.JoinVertical(lipgloss.Left, banner, headerInfo)
 }

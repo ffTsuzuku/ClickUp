@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 )
 
 const BaseURL = "https://api.clickup.com/api/v2"
@@ -20,7 +21,7 @@ type Client struct {
 func NewClient(token string) *Client {
 	return &Client{
 		Token:      token,
-		HTTPClient: &http.Client{},
+		HTTPClient: &http.Client{Timeout: 15 * time.Second},
 	}
 }
 
