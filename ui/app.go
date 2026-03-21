@@ -55,6 +55,11 @@ func (t listItem) Title() string       { return t.Name }
 func (t listItem) Description() string { return "List" }
 func (t listItem) FilterValue() string { return t.Name }
 
+type folderItem clickup.Folder
+func (f folderItem) Title() string       { return "📁 " + f.Name }
+func (f folderItem) Description() string { return "Folder" }
+func (f folderItem) FilterValue() string { return f.Name }
+
 type taskItem clickup.Task
 func (t taskItem) Title() string {
 	id := t.ID
@@ -69,12 +74,24 @@ func (t taskItem) Description() string {
 	pts := "0"
 	if t.Points != nil { pts = fmt.Sprintf("%v", *t.Points) }
 	
-	priority := "none"
+	priority := lipgloss.NewStyle().Foreground(ColorSubtext).Render("NONE")
 	if t.Priority != nil {
-		priority = strings.ToLower(t.Priority.Priority)
+		pColor := t.Priority.Color
+		if pColor == "" { pColor = "#6e7681" }
+		priority = lipgloss.NewStyle().Foreground(lipgloss.Color(pColor)).Bold(true).Render(strings.ToUpper(t.Priority.Priority))
 	}
 	
-	return fmt.Sprintf("Status: %s | Assignee: %s | PTS: %s | PRI: %s", t.Status.Status, assignee, pts, priority) 
+	status := t.Status.Status
+	switch strings.ToLower(status) {
+	case "todo", "open":
+		status = StatusTodoStyle.Render(status)
+	case "in progress", "active":
+		status = StatusInProgressStyle.Render(status)
+	case "done", "complete", "closed":
+		status = StatusDoneStyle.Render(status)
+	}
+	
+	return fmt.Sprintf("Status: %s | %s | PTS: %s | PRI: %s", status, assignee, pts, priority) 
 }
 func (t taskItem) FilterValue() string { 
 	assignee := "unassigned"
@@ -110,10 +127,13 @@ type AppModel struct {
 	listsList    list.Model
 	tasksList    list.Model
 	
-	allTeams     []clickup.Team
-	allSpaces    []clickup.Space
-	allLists     []clickup.List
-	allTasks     []clickup.Task
+	allTeams        []clickup.Team
+	allSpaces       []clickup.Space
+	allFolders      []clickup.Folder
+	allLists        []clickup.List
+	allTasks        []clickup.Task
+	
+	selectedFolder  *clickup.Folder
 
 	commentInput textarea.Model
 	taskInput    textinput.Model // used for create / rename
@@ -151,7 +171,7 @@ type AppModel struct {
 
 type teamsMsg []clickup.Team
 type spacesMsg []clickup.Space
-type listsMsg []clickup.List
+type listsMsg *clickup.SpaceHierarchy
 type tasksMsg []clickup.Task
 type taskDetailMsg struct {
 	Task     *clickup.Task
@@ -161,7 +181,7 @@ type commentsMsg []clickup.Comment
 type errMsg error
 type clearPopupMsg struct{}
 type taskCreatedMsg clickup.Task
-type moveListsReadyMsg []clickup.List
+type moveListsReadyMsg *clickup.SpaceHierarchy
 type teamMembersMsg []clickup.Member
 type commentAddedMsg struct{}
 type editorFinishedMsg struct{ content string; err error }
@@ -436,15 +456,30 @@ func InitialModel() *AppModel {
 			
 			if cfg.ClickupSpaceID != "" {
 				m.selectedSpace = cfg.ClickupSpaceID
-				lists, err := c.GetSpaceLists(cfg.ClickupSpaceID)
+				hierarchy, err := c.GetSpaceLists(cfg.ClickupSpaceID)
 				if err == nil {
-					m.allLists = lists
+					m.allFolders = hierarchy.Folders
+					m.allLists = hierarchy.Lists
+					m.selectedFolder = nil
 					var lItems []list.Item
-					for _, l := range lists { lItems = append(lItems, listItem(l)) }
+					for _, f := range m.allFolders { lItems = append(lItems, folderItem(f)) }
+					for _, l := range m.allLists { lItems = append(lItems, listItem(l)) }
 					m.listsList.SetItems(lItems)
 					m.state = stateLists
 					m.activeList = &m.listsList
 					
+					if cfg.ClickupFolderID != "" {
+						for _, f := range m.allFolders {
+							if f.ID == cfg.ClickupFolderID {
+								m.selectedFolder = &f
+								var items []list.Item
+								for _, l := range f.Lists { items = append(items, listItem(l)) }
+								m.listsList.SetItems(items)
+								break
+							}
+						}
+					}
+
 					if cfg.ClickupListID != "" {
 						m.selectedList = cfg.ClickupListID
 						tasks, err := c.GetTasks(cfg.ClickupListID)
@@ -535,9 +570,12 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case listsMsg:
 		m.loading = false
-		m.allLists = msg
+		m.allFolders = msg.Folders
+		m.allLists = msg.Lists
+		m.selectedFolder = nil
 		var items []list.Item
-		for _, l := range msg { items = append(items, listItem(l)) }
+		for _, f := range m.allFolders { items = append(items, folderItem(f)) }
+		for _, l := range m.allLists { items = append(items, listItem(l)) }
 		m.listsList.SetItems(items)
 		m.state = stateLists
 		m.activeList = &m.listsList
@@ -586,7 +624,11 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case moveListsReadyMsg:
 		m.loading = false
-		m.moveCandidateLists = []clickup.List(msg)
+		// Flatten for move picker (simpler for now)
+		var flat []clickup.List
+		for _, f := range msg.Folders { flat = append(flat, f.Lists...) }
+		flat = append(flat, msg.Lists...)
+		m.moveCandidateLists = flat
 		m.state = stateMovePicker
 		return m, nil
 	case teamMembersMsg:
@@ -947,6 +989,14 @@ func (m *AppModel) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.state = stateLists
 				m.activeList = &m.listsList
 			} else if m.state == stateLists {
+				if m.selectedFolder != nil {
+					m.selectedFolder = nil
+					var items []list.Item
+					for _, f := range m.allFolders { items = append(items, folderItem(f)) }
+					for _, l := range m.allLists { items = append(items, listItem(l)) }
+					m.listsList.SetItems(items)
+					return m, nil
+				}
 				m.state = stateSpaces
 				m.activeList = &m.spacesList
 			} else if m.state == stateSpaces {
@@ -1006,6 +1056,15 @@ func (m *AppModel) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, tea.Batch(m.spinner.Tick, fetchListsCmd(m.client, m.selectedSpace))
 				}
 			case stateLists:
+				if i, ok := m.activeList.SelectedItem().(folderItem); ok {
+					folder := clickup.Folder(i)
+					m.selectedFolder = &folder
+					var items []list.Item
+					for _, l := range folder.Lists { items = append(items, listItem(l)) }
+					m.listsList.SetItems(items)
+					m.activeList.Select(0)
+					return m, nil
+				}
 				if i, ok := m.activeList.SelectedItem().(listItem); ok {
 					m.selectedList = i.ID
 					m.loading = true
@@ -1540,12 +1599,20 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 				case stateLists:
 					if i, ok := m.activeList.SelectedItem().(listItem); ok {
 						m.cfg.ClickupListID = i.ID
+						m.cfg.ClickupFolderID = "" // Clear folder if list is set
 						m.cfg.ClickupSpaceID = m.selectedSpace
 						m.cfg.ClickupTeamID = m.selectedTeam
 						config.SaveConfig(m.cfg)
+						m.popupMsg = "Default set successfully"
+					} else if i, ok := m.activeList.SelectedItem().(folderItem); ok {
+						m.cfg.ClickupFolderID = i.ID
+						m.cfg.ClickupListID = "" // Clear list if folder is set
+						m.cfg.ClickupSpaceID = m.selectedSpace
+						m.cfg.ClickupTeamID = m.selectedTeam
+						config.SaveConfig(m.cfg)
+						m.popupMsg = "Default folder set successfully"
 					}
 				}
-				m.popupMsg = "Default set successfully"
 				return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
 			} else if strings.HasPrefix(val, "/default user clear") {
 				m.cfg.ClickupUserName = ""
@@ -1565,6 +1632,7 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else if strings.HasPrefix(val, "/default clear") {
 				m.cfg.ClickupTeamID = ""
 				m.cfg.ClickupSpaceID = ""
+				m.cfg.ClickupFolderID = ""
 				m.cfg.ClickupListID = ""
 				config.SaveConfig(m.cfg)
 				m.popupMsg = "Routing defaults cleared"
@@ -1657,7 +1725,31 @@ func (m *AppModel) updateViewportContent() {
 			if t.CustomID != "" {
 				sid = t.CustomID
 			}
-			b.WriteString(fmt.Sprintf("%d. [%s] %s (%s)\n", i+1, sid, t.Name, t.Status.Status))
+			
+			assignee := "unassigned"
+			if len(t.Assignees) > 0 { assignee = strings.ToLower(t.Assignees[0].Username) }
+			pts := "0"
+			if t.Points != nil { pts = fmt.Sprintf("%v", *t.Points) }
+			
+			pStr := lipgloss.NewStyle().Foreground(ColorSubtext).Render("NONE")
+			if t.Priority != nil {
+				pColor := t.Priority.Color
+				if pColor == "" { pColor = "#6e7681" }
+				pStr = lipgloss.NewStyle().Foreground(lipgloss.Color(pColor)).Bold(true).Render(strings.ToUpper(t.Priority.Priority))
+			}
+			
+			status := t.Status.Status
+			switch strings.ToLower(status) {
+			case "todo", "open":
+				status = StatusTodoStyle.Render(status)
+			case "in progress", "active":
+				status = StatusInProgressStyle.Render(status)
+			case "done", "complete", "closed":
+				status = StatusDoneStyle.Render(status)
+			}
+
+			b.WriteString(fmt.Sprintf("%d. [%s] %s\n", i+1, sid, t.Name))
+			b.WriteString(fmt.Sprintf("   %s | %s | PTS: %s | PRI: %s\n", status, assignee, pts, pStr))
 		}
 	} else {
 		b.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext).Render("No subtasks."))

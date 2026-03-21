@@ -111,7 +111,12 @@ type List struct {
 	Name string `json:"name"`
 }
 
-func (c *Client) GetSpaceLists(spaceID string) ([]List, error) {
+type SpaceHierarchy struct {
+	Folders []Folder `json:"folders"`
+	Lists   []List   `json:"lists"`
+}
+
+func (c *Client) GetSpaceLists(spaceID string) (*SpaceHierarchy, error) {
 	// First fetch all folders and extract their lists
 	folderEndpoint := fmt.Sprintf("/space/%s/folder", spaceID)
 	folderData, err := c.doReq("GET", folderEndpoint, nil)
@@ -122,11 +127,8 @@ func (c *Client) GetSpaceLists(spaceID string) ([]List, error) {
 	var fResult struct {
 		Folders []Folder `json:"folders"`
 	}
-	_ = json.Unmarshal(folderData, &fResult) // Ignore error, check lists logic later
-
-	var allLists []List
-	for _, f := range fResult.Folders {
-		allLists = append(allLists, f.Lists...)
+	if err := json.Unmarshal(folderData, &fResult); err != nil {
+		return nil, err
 	}
 
 	// Then fetch folderless lists
@@ -143,8 +145,10 @@ func (c *Client) GetSpaceLists(spaceID string) ([]List, error) {
 		return nil, err
 	}
 
-	allLists = append(allLists, lResult.Lists...)
-	return allLists, nil
+	return &SpaceHierarchy{
+		Folders: fResult.Folders,
+		Lists:   lResult.Lists,
+	}, nil
 }
 
 // Tasks --------------------------

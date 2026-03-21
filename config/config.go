@@ -11,6 +11,7 @@ type Config struct {
 	ClickupUserName string `json:"clickup_user_name"`
 	ClickupTeamID   string `json:"clickup_team_id"`
 	ClickupSpaceID  string `json:"clickup_space_id"`
+	ClickupFolderID string `json:"clickup_folder_id"`
 	ClickupListID   string `json:"clickup_list_id"`
 }
 
