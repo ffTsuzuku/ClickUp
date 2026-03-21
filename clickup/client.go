@@ -266,6 +266,25 @@ func (c *Client) GetTask(taskID string, teamID string) (*Task, error) {
 	return &task, nil
 }
 
+func (c *Client) GetTeamTasks(teamID string, page int) ([]Task, error) {
+	endpoint := fmt.Sprintf("/team/%s/task?page=%d&subtasks=true&include_closed=true&include_markdown_description=true", teamID, page)
+	data, err := c.doReq("GET", endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var result struct {
+		Tasks []Task `json:"tasks"`
+	}
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, err
+	}
+	for i := range result.Tasks {
+		normalizeTask(&result.Tasks[i])
+	}
+	return result.Tasks, nil
+}
+
 // AddComment is a mock for now (requires view task detail parsing or specific endpoint)
 func (c *Client) AddComment(taskID, comment, parentID string) error {
 	var endpoint string

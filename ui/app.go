@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -29,6 +30,7 @@ const (
 	stateSpaces
 	stateLists
 	stateTasks
+	stateSearchResults
 	stateTaskDetail
 	stateComment
 	stateCommand
@@ -140,6 +142,7 @@ type AppModel struct {
 	spacesList list.Model
 	listsList  list.Model
 	tasksList  list.Model
+	searchList list.Model
 
 	allTeams   []clickup.Team
 	allSpaces  []clickup.Space
@@ -167,6 +170,8 @@ type AppModel struct {
 	selectedList       string
 	selectedTask       clickup.Task
 	taskHistory        []clickup.Task
+	searchResults      []clickup.Task
+	searchQuery        string
 	moveCandidateLists []clickup.List
 	moveTaskID         string
 	teamMembers        []clickup.Member
@@ -191,8 +196,9 @@ type spacesMsg []clickup.Space
 type listsMsg *clickup.SpaceHierarchy
 type tasksMsg []clickup.Task
 type taskDetailMsg struct {
-	Task     *clickup.Task
-	Comments []clickup.Comment
+	Task      *clickup.Task
+	Comments  []clickup.Comment
+	BackState state
 }
 type commentsMsg []clickup.Comment
 type errMsg error
@@ -204,6 +210,10 @@ type commentAddedMsg struct{}
 type editorFinishedMsg struct {
 	content string
 	err     error
+}
+type searchResultsMsg struct {
+	Query string
+	Tasks []clickup.Task
 }
 
 func fetchTeamsCmd(c *clickup.Client) tea.Cmd {
@@ -246,7 +256,7 @@ func fetchTasksCmd(c *clickup.Client, listID string) tea.Cmd {
 	}
 }
 
-func fetchTaskCmd(c *clickup.Client, taskID, teamID string) tea.Cmd {
+func fetchTaskCmd(c *clickup.Client, taskID, teamID string, backState state) tea.Cmd {
 	return func() tea.Msg {
 		task, err := c.GetTask(taskID, teamID)
 		if err != nil {
@@ -256,8 +266,9 @@ func fetchTaskCmd(c *clickup.Client, taskID, teamID string) tea.Cmd {
 		comments, _ := fetchCommentsRecursive(task.ID, c)
 
 		return taskDetailMsg{
-			Task:     task,
-			Comments: comments,
+			Task:      task,
+			Comments:  comments,
+			BackState: backState,
 		}
 	}
 }
@@ -397,6 +408,96 @@ func fetchTeamMembersCmd(c *clickup.Client, teamID string) tea.Cmd {
 	}
 }
 
+func scoreSearchMatch(query string, task clickup.Task) int {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return 0
+	}
+
+	id := strings.ToLower(task.ID)
+	if task.CustomID != "" {
+		id = strings.ToLower(task.CustomID)
+	}
+	title := strings.ToLower(task.Name)
+	desc := strings.ToLower(task.Desc)
+
+	switch {
+	case id == query:
+		return 1000
+	case strings.HasPrefix(id, query):
+		return 900
+	case strings.HasPrefix(title, query):
+		return 800
+	case strings.Contains(title, query):
+		return 700
+	case fuzzyMatch(query, title):
+		return 600
+	case strings.Contains(id, query):
+		return 500
+	case strings.Contains(desc, query):
+		return 300
+	case fuzzyMatch(query, id):
+		return 200
+	default:
+		return 0
+	}
+}
+
+func searchTasksCmd(c *clickup.Client, teamID, query string) tea.Cmd {
+	return func() tea.Msg {
+		if teamID == "" {
+			return errMsg(fmt.Errorf("global search requires a workspace/team to be selected or configured"))
+		}
+
+		seen := make(map[string]bool)
+		var matches []clickup.Task
+		for page := 0; page < 10; page++ {
+			tasks, err := c.GetTeamTasks(teamID, page)
+			if err != nil {
+				return errMsg(err)
+			}
+			if len(tasks) == 0 {
+				break
+			}
+			for _, task := range tasks {
+				if seen[task.ID] {
+					continue
+				}
+				seen[task.ID] = true
+				if scoreSearchMatch(query, task) > 0 {
+					matches = append(matches, task)
+				}
+			}
+			if len(tasks) < 100 {
+				break
+			}
+		}
+
+		sort.SliceStable(matches, func(i, j int) bool {
+			si := scoreSearchMatch(query, matches[i])
+			sj := scoreSearchMatch(query, matches[j])
+			if si != sj {
+				return si > sj
+			}
+			idi := matches[i].ID
+			if matches[i].CustomID != "" {
+				idi = matches[i].CustomID
+			}
+			idj := matches[j].ID
+			if matches[j].CustomID != "" {
+				idj = matches[j].CustomID
+			}
+			return idi < idj
+		})
+
+		if len(matches) > 100 {
+			matches = matches[:100]
+		}
+
+		return searchResultsMsg{Query: query, Tasks: matches}
+	}
+}
+
 func openExternalEditorCmd(initialContent string) tea.Cmd {
 	editor := os.Getenv("EDITOR")
 	if editor == "" {
@@ -474,6 +575,10 @@ func InitialModel() *AppModel {
 	tasksList.Title = "Tasks"
 	tasksList.SetFilteringEnabled(false)
 
+	searchList := list.New(nil, list.NewDefaultDelegate(), 0, 0)
+	searchList.Title = "Search Results"
+	searchList.SetFilteringEnabled(false)
+
 	ci := textarea.New()
 	ci.Placeholder = "Enter comment..."
 	ci.SetWidth(80)
@@ -518,6 +623,7 @@ func InitialModel() *AppModel {
 		spacesList:    spacesList,
 		listsList:     listsList,
 		tasksList:     tasksList,
+		searchList:    searchList,
 		allTeams:      allTeams,
 		commentInput:  ci,
 		taskInput:     ti,
@@ -620,6 +726,7 @@ func (m *AppModel) updateLayout() {
 	m.spacesList.SetSize(m.width-h, contentH)
 	m.listsList.SetSize(m.width-h, contentH)
 	m.tasksList.SetSize(m.width-h, contentH)
+	m.searchList.SetSize(m.width-h, contentH)
 	m.vp.Width = m.width - h
 	m.vp.Height = contentH
 	if m.state == stateEditDesc {
@@ -695,6 +802,20 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.state = stateTasks
 		m.activeList = &m.tasksList
 		return m, nil
+	case searchResultsMsg:
+		m.loading = false
+		m.searchResults = msg.Tasks
+		m.searchQuery = msg.Query
+		var items []list.Item
+		for _, t := range msg.Tasks {
+			items = append(items, taskItem(t))
+		}
+		m.searchList.Title = fmt.Sprintf("Search Results (%d): %s", len(msg.Tasks), msg.Query)
+		m.searchList.SetItems(items)
+		m.searchList.Select(0)
+		m.state = stateSearchResults
+		m.activeList = &m.searchList
+		return m, nil
 	case taskDetailMsg:
 		m.loading = false
 		m.selectedTask = *msg.Task
@@ -705,6 +826,7 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.taskHistory = nil
 		}
 		m.state = stateTaskDetail
+		m.prevState = msg.BackState
 		m.updateViewportContent()
 		return m, nil
 	case taskCreatedMsg:
@@ -805,7 +927,7 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	switch m.state {
-	case stateTeams, stateSpaces, stateLists, stateTasks:
+	case stateTeams, stateSpaces, stateLists, stateTasks, stateSearchResults:
 		return m.updateList(msg)
 	case stateTaskDetail:
 		return m.updateDetail(msg)
@@ -948,6 +1070,7 @@ func (m *AppModel) updateCommandSuggestions() {
 	sugs = append(sugs, Suggestion{"/clear", "Clear active list filters"})
 	sugs = append(sugs, Suggestion{"/help", "Show help documentation"})
 	sugs = append(sugs, Suggestion{"/ticket ", "Open a ticket directly by ID"})
+	sugs = append(sugs, Suggestion{"/search ", "Search tickets across the workspace"})
 
 	if m.prevState == stateTeams || m.prevState == stateSpaces || m.prevState == stateLists {
 		sugs = append(sugs, Suggestion{"/default set", "Set the currently highlighted item as your default routing"})
@@ -1180,6 +1303,9 @@ func (m *AppModel) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.state == stateTasks {
 				m.state = stateLists
 				m.activeList = &m.listsList
+			} else if m.state == stateSearchResults {
+				m.state = stateTasks
+				m.activeList = &m.tasksList
 			} else if m.state == stateLists {
 				if m.selectedFolder != nil {
 					m.selectedFolder = nil
@@ -1275,7 +1401,15 @@ func (m *AppModel) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.taskHistory = nil
 					m.loading = true
 					m.loadingMsg = "Fetching task details..."
-					return m, tea.Batch(m.spinner.Tick, fetchTaskCmd(m.client, i.ID, m.selectedTeam))
+					return m, tea.Batch(m.spinner.Tick, fetchTaskCmd(m.client, i.ID, m.selectedTeam, stateTasks))
+				}
+			case stateSearchResults:
+				if i, ok := m.activeList.SelectedItem().(taskItem); ok {
+					m.selectedTask = clickup.Task(i)
+					m.taskHistory = nil
+					m.loading = true
+					m.loadingMsg = "Fetching task details..."
+					return m, tea.Batch(m.spinner.Tick, fetchTaskCmd(m.client, i.ID, m.selectedTeam, stateSearchResults))
 				}
 			}
 			return m, nil
@@ -1297,7 +1431,13 @@ func (m *AppModel) updateDetail(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.taskHistory = m.taskHistory[:len(m.taskHistory)-1]
 				m.updateViewportContent()
 			} else {
-				m.state = stateTasks
+				if m.prevState == stateSearchResults {
+					m.state = stateSearchResults
+					m.activeList = &m.searchList
+				} else {
+					m.state = stateTasks
+					m.activeList = &m.tasksList
+				}
 			}
 			return m, nil
 		case "c":
@@ -1335,7 +1475,7 @@ func (m *AppModel) updateDetail(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.taskHistory = append(m.taskHistory, m.selectedTask)
 				m.loading = true
 				m.loadingMsg = "Fetching subtask details..."
-				return m, tea.Batch(m.spinner.Tick, fetchTaskCmd(m.client, subtasks[idx].ID, m.selectedTeam))
+				return m, tea.Batch(m.spinner.Tick, fetchTaskCmd(m.client, subtasks[idx].ID, m.selectedTeam, stateTaskDetail))
 			}
 			return m, nil
 		case "o":
@@ -1350,7 +1490,7 @@ func (m *AppModel) updateDetail(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "r":
 			m.loading = true
 			m.loadingMsg = "Refreshing task..."
-			return m, tea.Batch(m.spinner.Tick, fetchTaskCmd(m.client, m.selectedTask.ID, m.selectedTeam))
+			return m, tea.Batch(m.spinner.Tick, fetchTaskCmd(m.client, m.selectedTask.ID, m.selectedTeam, m.prevState))
 		}
 	}
 	var cmd tea.Cmd
@@ -1595,6 +1735,20 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else if strings.HasPrefix(val, "/help") {
 				m.state = stateHelp
 				m.updateHelpContent()
+			} else if strings.HasPrefix(val, "/search ") {
+				query := strings.TrimSpace(strings.TrimPrefix(val, "/search "))
+				if query != "" {
+					teamID := m.selectedTeam
+					if teamID == "" && m.cfg != nil {
+						teamID = m.cfg.ClickupTeamID
+					}
+					if teamID == "" && len(m.allTeams) > 0 {
+						teamID = m.allTeams[0].ID
+					}
+					m.loading = true
+					m.loadingMsg = "Searching tickets..."
+					return m, tea.Batch(m.spinner.Tick, searchTasksCmd(m.client, teamID, query))
+				}
 			} else if strings.HasPrefix(val, "/status ") {
 				if m.prevState == stateTaskDetail {
 					newStatus := strings.TrimPrefix(val, "/status ")
@@ -1653,7 +1807,7 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					m.loading = true
 					m.loadingMsg = "Loading ticket " + id + "..."
-					return m, tea.Batch(m.spinner.Tick, fetchTaskCmd(m.client, id, teamID))
+					return m, tea.Batch(m.spinner.Tick, fetchTaskCmd(m.client, id, teamID, m.prevState))
 				}
 			} else if strings.HasPrefix(val, "/points ") {
 				if m.prevState == stateTaskDetail {
@@ -2082,6 +2236,7 @@ func (m *AppModel) updateHelpContent() {
 	b.WriteString("• /filter status <status>  : Filter tasks by a specific status\n")
 	b.WriteString("• /filter id <id>          : Filter tasks by exact ID\n")
 	b.WriteString("• /ticket <id>             : Jump directly to a ticket from anywhere (e.g. /ticket OMNI-123)\n")
+	b.WriteString("• /search <text>           : Search tickets across the workspace\n")
 	b.WriteString("• /clear                   : Clear active filters\n\n")
 
 	b.WriteString(lipgloss.NewStyle().Bold(true).Render("Task Actions (when viewing a task)"))
@@ -2169,7 +2324,7 @@ func (m *AppModel) View() string {
 	var mainContent string
 
 	switch m.state {
-	case stateTeams, stateSpaces, stateLists, stateTasks:
+	case stateTeams, stateSpaces, stateLists, stateTasks, stateSearchResults:
 		view := m.activeList.View()
 		if m.state == stateTasks {
 			// Integrate into the same row as the list help, but trim the justified whitespace
@@ -2181,6 +2336,17 @@ func (m *AppModel) View() string {
 			if lastIdx >= 0 {
 				style := lipgloss.NewStyle().Foreground(ColorSubtext)
 				lines[lastIdx] = strings.TrimRight(lines[lastIdx], " ") + style.Render(" • a/n: new task • r: refresh")
+				view = strings.Join(lines, "\n")
+			}
+		} else if m.state == stateSearchResults {
+			lines := strings.Split(view, "\n")
+			lastIdx := len(lines) - 1
+			for lastIdx >= 0 && strings.TrimSpace(lines[lastIdx]) == "" {
+				lastIdx--
+			}
+			if lastIdx >= 0 {
+				style := lipgloss.NewStyle().Foreground(ColorSubtext)
+				lines[lastIdx] = strings.TrimRight(lines[lastIdx], " ") + style.Render(" • enter: open ticket • esc: back")
 				view = strings.Join(lines, "\n")
 			}
 		}
