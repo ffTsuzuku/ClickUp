@@ -189,10 +189,11 @@ type Comment struct {
 }
 
 type Attachment struct {
-	ID        string `json:"id"`
-	Title     string `json:"title"`
-	Extension string `json:"extension"`
-	URL       string `json:"url"`
+	ID         string `json:"id"`
+	Title      string `json:"title"`
+	Extension  string `json:"extension"`
+	URL        string `json:"url"`
+	URLWithQuery string `json:"url_w_query"`
 }
 
 func (c *Client) GetTeamMembers(teamID string) ([]Member, error) {

@@ -427,6 +427,13 @@ func openAttachmentURLCmd(url string) tea.Cmd {
 	}
 }
 
+func attachmentOpenURL(a clickup.Attachment) string {
+	if a.URLWithQuery != "" {
+		return a.URLWithQuery
+	}
+	return a.URL
+}
+
 func fetchTeamMembersCmd(c *clickup.Client, teamID string) tea.Cmd {
 	return func() tea.Msg {
 		members, err := c.GetTeamMembers(teamID)
@@ -1198,7 +1205,8 @@ func (m *AppModel) updateCommandSuggestions() {
 		sugs = append(sugs, Suggestion{"/desc", "Edit the ticket description (inline)"})
 		sugs = append(sugs, Suggestion{"/editext", "Edit description in $EDITOR (vim etc)"})
 		sugs = append(sugs, Suggestion{"/subtask", "Add a subtask to this ticket"})
-		sugs = append(sugs, Suggestion{"/attach open ", "Open an attachment in your browser by number (e.g. /attach open 1)"})
+		sugs = append(sugs, Suggestion{"/attach open ", "Open an attachment preview in your browser by number (e.g. /attach open 1)"})
+		sugs = append(sugs, Suggestion{"/attach download ", "Download an attachment by number (e.g. /attach download 1)"})
 		sugs = append(sugs, Suggestion{"/attach share ", "Copy an attachment URL to your clipboard by number (e.g. /attach share 1)"})
 		sugs = append(sugs, Suggestion{"/comment edit ", "Edit a comment by its number (e.g. /comment edit 1)"})
 		sugs = append(sugs, Suggestion{"/priority ", "Set task priority (urgent, high, normal, low, none)"})
@@ -1979,16 +1987,24 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if len(parts) >= 3 {
 						idx, err := strconv.Atoi(parts[2])
 						if err == nil && idx > 0 && idx <= len(m.selectedTask.Attachments) {
-							url := m.selectedTask.Attachments[idx-1].URL
+							attachment := m.selectedTask.Attachments[idx-1]
+							url := attachment.URL
 							action := strings.ToLower(parts[1])
 							if action == "open" {
-								m.popupMsg = "Opening in Browser..."
+								previewURL := attachmentOpenURL(attachment)
+								m.popupMsg = "Opening attachment in browser..."
+								return m, tea.Batch(
+									openAttachmentURLCmd(previewURL),
+									tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} }),
+								)
+							} else if action == "download" || action == "dl" {
+								m.popupMsg = "Starting attachment download..."
 								return m, tea.Batch(
 									openAttachmentURLCmd(url),
 									tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} }),
 								)
 							} else if action == "share" {
-								clipboard.WriteAll(url)
+								clipboard.WriteAll(attachmentOpenURL(attachment))
 								m.popupMsg = "Copied Attachment URL!"
 								return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
 							}
@@ -2379,6 +2395,9 @@ func (m *AppModel) updateHelpContent() {
 	b.WriteString("• /desc            : Edit description (inline)\n")
 	b.WriteString("• /editext         : Edit description in external $EDITOR\n")
 	b.WriteString("• /subtask         : Create a new subtask\n")
+	b.WriteString("• /attach open <n>     : Open attachment preview in browser\n")
+	b.WriteString("• /attach download <n> : Trigger attachment download\n")
+	b.WriteString("• /attach share <n>    : Copy attachment URL\n")
 	b.WriteString("• c                : Add a comment\n")
 	b.WriteString("• e                : Edit description (inline)\n")
 	b.WriteString("• E                : Edit description in external $EDITOR\n")
