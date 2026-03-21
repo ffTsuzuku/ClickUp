@@ -173,6 +173,13 @@ type Member struct {
 	} `json:"user"`
 }
 
+type Comment struct {
+	ID          string   `json:"id"`
+	CommentText string   `json:"comment_text"`
+	User        Assignee `json:"user"`
+	Date        string   `json:"date"`
+}
+
 func (c *Client) GetTeamMembers(teamID string) ([]Member, error) {
 	endpoint := fmt.Sprintf("/team/%s/member", teamID)
 	data, err := c.doReq("GET", endpoint, nil)
@@ -275,9 +282,12 @@ func (c *Client) UpdatePoints(taskID string, points float64) error {
 }
 
 // CreateTask creates a new task in a given list
-func (c *Client) CreateTask(listID, name string) (*Task, error) {
+func (c *Client) CreateTask(listID, name string, assignees []int) (*Task, error) {
 	endpoint := fmt.Sprintf("/list/%s/task", listID)
 	reqBody := map[string]interface{}{"name": name}
+	if len(assignees) > 0 {
+		reqBody["assignees"] = assignees
+	}
 	body, _ := json.Marshal(reqBody)
 	data, err := c.doReq("POST", endpoint, body)
 	if err != nil {
@@ -291,9 +301,12 @@ func (c *Client) CreateTask(listID, name string) (*Task, error) {
 }
 
 // CreateSubtask creates a new subtask under a parent task
-func (c *Client) CreateSubtask(listID, parentID, name string) (*Task, error) {
+func (c *Client) CreateSubtask(listID, parentID, name string, assignees []int) (*Task, error) {
 	endpoint := fmt.Sprintf("/list/%s/task", listID)
 	reqBody := map[string]interface{}{"name": name, "parent": parentID}
+	if len(assignees) > 0 {
+		reqBody["assignees"] = assignees
+	}
 	body, _ := json.Marshal(reqBody)
 	data, err := c.doReq("POST", endpoint, body)
 	if err != nil {
@@ -360,4 +373,19 @@ func (c *Client) GetUser() (*Assignee, error) {
 		return nil, err
 	}
 	return &result.User, nil
+}
+
+func (c *Client) GetTaskComments(taskID string) ([]Comment, error) {
+	endpoint := fmt.Sprintf("/task/%s/comment", taskID)
+	data, err := c.doReq("GET", endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	var result struct {
+		Comments []Comment `json:"comments"`
+	}
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, err
+	}
+	return result.Comments, nil
 }

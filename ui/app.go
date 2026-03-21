@@ -141,7 +141,9 @@ type AppModel struct {
 	spinner    spinner.Model
 	popupMsg   string
 	
-	currentUser string
+	selectedComments []clickup.Comment
+	currentUser      string
+	currentUserID    int
 	err error
 }
 
@@ -149,12 +151,17 @@ type teamsMsg []clickup.Team
 type spacesMsg []clickup.Space
 type listsMsg []clickup.List
 type tasksMsg []clickup.Task
-type taskDetailMsg *clickup.Task
+type taskDetailMsg struct {
+	Task     *clickup.Task
+	Comments []clickup.Comment
+}
+type commentsMsg []clickup.Comment
 type errMsg error
 type clearPopupMsg struct{}
 type taskCreatedMsg clickup.Task
 type moveListsReadyMsg []clickup.List
 type teamMembersMsg []clickup.Member
+type commentAddedMsg struct{}
 type editorFinishedMsg struct{ content string; err error }
 
 func fetchTeamsCmd(c *clickup.Client) tea.Cmd {
@@ -192,22 +199,34 @@ func fetchTasksCmd(c *clickup.Client, listID string) tea.Cmd {
 func fetchTaskCmd(c *clickup.Client, taskID, teamID string) tea.Cmd {
 	return func() tea.Msg {
 		task, err := c.GetTask(taskID, teamID)
-		if err != nil { return errMsg(err) }
-		return taskDetailMsg(task)
+		if err != nil {
+			return errMsg(err)
+		}
+		
+		comments, _ := c.GetTaskComments(task.ID) // Use internal ID for comments
+		
+		return taskDetailMsg{
+			Task:     task,
+			Comments: comments,
+		}
 	}
 }
 
-func createTaskCmd(c *clickup.Client, listID, name string) tea.Cmd {
+func createTaskCmd(c *clickup.Client, listID, name string, userID int) tea.Cmd {
 	return func() tea.Msg {
-		task, err := c.CreateTask(listID, name)
+		var assignees []int
+		if userID != 0 { assignees = []int{userID} }
+		task, err := c.CreateTask(listID, name, assignees)
 		if err != nil { return errMsg(err) }
 		return taskCreatedMsg(*task)
 	}
 }
 
-func createSubtaskCmd(c *clickup.Client, listID, parentID, name string) tea.Cmd {
+func createSubtaskCmd(c *clickup.Client, listID, parentID, name string, userID int) tea.Cmd {
 	return func() tea.Msg {
-		task, err := c.CreateSubtask(listID, parentID, name)
+		var assignees []int
+		if userID != 0 { assignees = []int{userID} }
+		task, err := c.CreateSubtask(listID, parentID, name, assignees)
 		if err != nil { return errMsg(err) }
 		return taskCreatedMsg(*task)
 	}
@@ -218,6 +237,23 @@ func fetchAllListsForMoveCmd(c *clickup.Client, spaceID string) tea.Cmd {
 		lists, err := c.GetSpaceLists(spaceID)
 		if err != nil { return errMsg(err) }
 		return moveListsReadyMsg(lists)
+	}
+}
+
+func addCommentCmd(c *clickup.Client, taskID, comment string) tea.Cmd {
+	return func() tea.Msg {
+		if err := c.AddComment(taskID, comment); err != nil {
+			return errMsg(err)
+		}
+		return commentAddedMsg{}
+	}
+}
+
+func fetchCommentsCmd(c *clickup.Client, taskID string) tea.Cmd {
+	return func() tea.Msg {
+		comments, err := c.GetTaskComments(taskID)
+		if err != nil { return errMsg(err) }
+		return commentsMsg(comments)
 	}
 }
 
@@ -267,11 +303,13 @@ func InitialModel() *AppModel {
 	c := clickup.NewClient(cfg.ClickupAPIKey)
 
 	var currentUser string = "Unauthenticated"
+	var currentUserID int = 0
 	// Fetch user identity if missing from config
 	if cfg.ClickupAPIKey != "NO_TOKEN" {
 		u, err := c.GetUser()
 		if err == nil {
 			currentUser = u.Username
+			currentUserID = u.ID
 			if cfg.ClickupUserName == "" {
 				cfg.ClickupUserName = u.Username
 				config.SaveConfig(cfg)
@@ -353,6 +391,7 @@ func InitialModel() *AppModel {
 		vp:           vp,
 		spinner:      s,
 		currentUser:  currentUser,
+		currentUserID: currentUserID,
 	}
 	m.activeList = &m.teamsList
 	
@@ -486,8 +525,11 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case taskDetailMsg:
 		m.loading = false
-		m.selectedTask = *msg
-		m.taskHistory = nil
+		m.selectedTask = *msg.Task
+		m.selectedComments = msg.Comments
+		if m.state != stateTaskDetail {
+			m.taskHistory = nil
+		}
 		m.state = stateTaskDetail
 		m.updateViewportContent()
 		return m, nil
@@ -540,6 +582,16 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.state = stateTaskDetail
+		m.updateViewportContent()
+		return m, nil
+	case commentAddedMsg:
+		m.popupMsg = "Comment added!"
+		return m, tea.Batch(
+			fetchCommentsCmd(m.client, m.selectedTask.ID),
+			tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} }),
+		)
+	case commentsMsg:
+		m.selectedComments = msg
 		m.updateViewportContent()
 		return m, nil
 	case errMsg:
@@ -895,8 +947,9 @@ func (m *AppModel) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if i, ok := m.activeList.SelectedItem().(taskItem); ok {
 					m.selectedTask = clickup.Task(i)
 					m.taskHistory = nil
-					m.state = stateTaskDetail
-					m.updateViewportContent()
+					m.loading = true
+					m.loadingMsg = "Fetching task details..."
+					return m, tea.Batch(m.spinner.Tick, fetchTaskCmd(m.client, i.ID, m.selectedTeam))
 				}
 			}
 			return m, nil
@@ -953,8 +1006,9 @@ func (m *AppModel) updateDetail(msg tea.Msg) (tea.Model, tea.Cmd) {
 			idx := int(msg.String()[0] - '1')
 			if idx >= 0 && idx < len(subtasks) {
 				m.taskHistory = append(m.taskHistory, m.selectedTask)
-				m.selectedTask = subtasks[idx]
-				m.updateViewportContent()
+				m.loading = true
+				m.loadingMsg = "Fetching subtask details..."
+				return m, tea.Batch(m.spinner.Tick, fetchTaskCmd(m.client, subtasks[idx].ID, m.selectedTeam))
 			}
 			return m, nil
 		case "r":
@@ -975,10 +1029,11 @@ func (m *AppModel) updateComment(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyEnter:
 			v := m.commentInput.Value()
 			if v != "" {
-				m.client.AddComment(m.selectedTask.ID, v)
 				m.commentInput.SetValue("")
 				m.commentInput.Blur()
 				m.state = stateTaskDetail
+				m.popupMsg = "Adding comment..."
+				return m, addCommentCmd(m.client, m.selectedTask.ID, v)
 			}
 			return m, nil
 		case tea.KeyEsc:
@@ -1005,7 +1060,7 @@ func (m *AppModel) updateCreateTask(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.state = stateTasks
 				m.loading = true
 				m.loadingMsg = "Creating task..."
-				return m, tea.Batch(m.spinner.Tick, createTaskCmd(m.client, m.selectedList, name))
+				return m, tea.Batch(m.spinner.Tick, createTaskCmd(m.client, m.selectedList, name, m.currentUserID))
 			}
 		case tea.KeyEsc:
 			m.taskInput.Blur()
@@ -1029,7 +1084,7 @@ func (m *AppModel) updateCreateSubtask(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.state = stateTaskDetail
 				m.loading = true
 				m.loadingMsg = "Creating subtask..."
-				return m, tea.Batch(m.spinner.Tick, createSubtaskCmd(m.client, m.selectedList, m.parentTaskID, name))
+				return m, tea.Batch(m.spinner.Tick, createSubtaskCmd(m.client, m.selectedList, m.parentTaskID, name, m.currentUserID))
 			}
 		case tea.KeyEsc:
 			m.taskInput.Blur()
@@ -1453,6 +1508,18 @@ func (m *AppModel) updateViewportContent() {
 		}
 	} else {
 		b.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext).Render("No subtasks."))
+	}
+	b.WriteString("\n\n")
+	
+	b.WriteString(divider + "\n\n")
+	b.WriteString(SectionHeaderStyle.Render("COMMENTS") + "\n")
+	if len(m.selectedComments) > 0 {
+		for _, c := range m.selectedComments {
+			author := lipgloss.NewStyle().Foreground(ColorSecondary).Bold(true).Render(c.User.Username)
+			b.WriteString(fmt.Sprintf("%s: %s\n", author, c.CommentText))
+		}
+	} else {
+		b.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext).Render("No comments."))
 	}
 	b.WriteString("\n\n")
 
