@@ -212,6 +212,13 @@ func (c *Config) DeleteProfile(name string) (string, bool) {
 	return c.ActiveProfile, true
 }
 
+func (c *Config) ClearRoutingDefaults() {
+	c.ClickupTeamID = ""
+	c.ClickupSpaceID = ""
+	c.ClickupFolderID = ""
+	c.ClickupListID = ""
+}
+
 func LoadConfig() (*Config, error) {
 	path, err := configPath()
 	if err != nil {

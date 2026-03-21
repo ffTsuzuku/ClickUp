@@ -224,17 +224,39 @@ func newBaseModel(cfg *config.Config) *AppModel {
 	return m
 }
 
-func hydrateModelDefaults(m *AppModel) error {
+func isStaleRoutingErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "401") ||
+		strings.Contains(msg, "not authorized") ||
+		strings.Contains(msg, "not found")
+}
+
+func saveClearedRoutingDefaults(cfg *config.Config) error {
+	cfg.ClearRoutingDefaults()
+	return config.SaveConfig(cfg)
+}
+
+func hydrateModelDefaults(m *AppModel) (string, error) {
 	cfg := m.cfg
 	c := m.client
 	if cfg.ClickupTeamID == "" {
-		return nil
+		return "", nil
 	}
 
 	m.selectedTeam = cfg.ClickupTeamID
 	spaces, err := c.GetSpaces(cfg.ClickupTeamID)
 	if err != nil {
-		return err
+		if isStaleRoutingErr(err) {
+			if saveErr := saveClearedRoutingDefaults(cfg); saveErr != nil {
+				return "", saveErr
+			}
+			m.selectedTeam = ""
+			return "Saved routing defaults were cleared because this workspace is not accessible for the active profile.", nil
+		}
+		return "", err
 	}
 	m.allSpaces = spaces
 	var sItems []list.Item
@@ -246,13 +268,23 @@ func hydrateModelDefaults(m *AppModel) error {
 	m.activeList = &m.spacesList
 
 	if cfg.ClickupSpaceID == "" {
-		return nil
+		return "", nil
 	}
 
 	m.selectedSpace = cfg.ClickupSpaceID
 	hierarchy, err := c.GetSpaceLists(cfg.ClickupSpaceID)
 	if err != nil {
-		return err
+		if isStaleRoutingErr(err) {
+			cfg.ClickupSpaceID = ""
+			cfg.ClickupFolderID = ""
+			cfg.ClickupListID = ""
+			if saveErr := config.SaveConfig(cfg); saveErr != nil {
+				return "", saveErr
+			}
+			m.selectedSpace = ""
+			return "Saved space/list defaults were cleared because they are not accessible for the active profile.", nil
+		}
+		return "", err
 	}
 	m.allFolders = hierarchy.Folders
 	m.allLists = hierarchy.Lists
@@ -269,8 +301,10 @@ func hydrateModelDefaults(m *AppModel) error {
 	m.activeList = &m.listsList
 
 	if cfg.ClickupFolderID != "" {
+		foundFolder := false
 		for _, f := range m.allFolders {
 			if f.ID == cfg.ClickupFolderID {
+				foundFolder = true
 				m.selectedFolder = &f
 				var items []list.Item
 				for _, l := range f.Lists {
@@ -280,22 +314,34 @@ func hydrateModelDefaults(m *AppModel) error {
 				break
 			}
 		}
+		if !foundFolder {
+			cfg.ClickupFolderID = ""
+			_ = config.SaveConfig(cfg)
+		}
 	}
 
 	if cfg.ClickupListID == "" {
-		return nil
+		return "", nil
 	}
 
 	m.selectedList = cfg.ClickupListID
 	tasks, err := c.GetTasks(cfg.ClickupListID)
 	if err != nil {
-		return err
+		if isStaleRoutingErr(err) {
+			cfg.ClickupListID = ""
+			if saveErr := config.SaveConfig(cfg); saveErr != nil {
+				return "", saveErr
+			}
+			m.selectedList = ""
+			return "Saved list default was cleared because it is not accessible for the active profile.", nil
+		}
+		return "", err
 	}
 	m.allTasks = tasks
 	m.applyTaskFilter("")
 	m.state = stateTasks
 	m.activeList = &m.tasksList
-	return nil
+	return "", nil
 }
 
 func bootstrapModel(cfg *config.Config) *AppModel {
@@ -321,7 +367,7 @@ func bootstrapModel(cfg *config.Config) *AppModel {
 		m.teamsList.SetItems(items)
 	}
 
-	_ = hydrateModelDefaults(m)
+	_, _ = hydrateModelDefaults(m)
 	return m
 }
 
@@ -474,8 +520,8 @@ func loadProfileTeamsCmd(m *AppModel, popup string) tea.Cmd {
 
 func loadProfileDefaultsCmd(m *AppModel, popup string) tea.Cmd {
 	return func() tea.Msg {
-		err := hydrateModelDefaults(m)
-		return profileReloadMsg{Model: m, Popup: popupWithErr(popup, "loading saved defaults", err)}
+		warning, err := hydrateModelDefaults(m)
+		return profileReloadMsg{Model: m, Popup: popupWithWarning(popupWithErr(popup, "loading saved defaults", err), warning)}
 	}
 }
 
@@ -484,6 +530,16 @@ func popupWithErr(success, phase string, err error) string {
 		return success
 	}
 	return fmt.Sprintf("Error %s: %v", phase, err)
+}
+
+func popupWithWarning(base, warning string) string {
+	if warning == "" {
+		return base
+	}
+	if base == "" {
+		return warning
+	}
+	return base + " " + warning
 }
 
 func normalizeSearchValue(s string) string {
@@ -2049,9 +2105,13 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.popupMsg = "Error: failed to create profile"
 					return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
 				}
-				m.loading = true
-				m.loadingMsg = "Switching to profile " + name + "..."
-				return m, tea.Batch(m.spinner.Tick, reloadProfileCmd(m.cfg, m.width, m.height, "Created and switched to profile "+name))
+				reloaded := newBaseModel(m.cfg)
+				reloaded.width = m.width
+				reloaded.height = m.height
+				reloaded.updateLayout()
+				reloaded.popupMsg = "Created and switched to profile " + name
+				*m = *reloaded
+				return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
 			} else if strings.HasPrefix(val, "/profile switch ") {
 				name := strings.TrimSpace(strings.TrimPrefix(val, "/profile switch "))
 				if name == "" {
