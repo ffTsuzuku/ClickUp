@@ -434,6 +434,15 @@ func attachmentOpenURL(a clickup.Attachment) string {
 	return a.URL
 }
 
+func (m *AppModel) copyTaskDescription() tea.Cmd {
+	desc := m.editableDescription()
+	clipboard.WriteAll(desc)
+	m.popupMsg = "Copied description to clipboard"
+	return tea.Tick(time.Second*1, func(_ time.Time) tea.Msg {
+		return clearPopupMsg{}
+	})
+}
+
 func fetchTeamMembersCmd(c *clickup.Client, teamID string) tea.Cmd {
 	return func() tea.Msg {
 		members, err := c.GetTeamMembers(teamID)
@@ -1203,6 +1212,7 @@ func (m *AppModel) updateCommandSuggestions() {
 		sugs = append(sugs, Suggestion{"/move", "Move this ticket to another list"})
 		sugs = append(sugs, Suggestion{"/assign ", "Change assignee (e.g. /assign deep)"})
 		sugs = append(sugs, Suggestion{"/desc", "Edit the ticket description (inline)"})
+		sugs = append(sugs, Suggestion{"/copydesc", "Copy the ticket description to your clipboard"})
 		sugs = append(sugs, Suggestion{"/editext", "Edit description in $EDITOR (vim etc)"})
 		sugs = append(sugs, Suggestion{"/subtask", "Add a subtask to this ticket"})
 		sugs = append(sugs, Suggestion{"/attach open ", "Open an attachment preview in your browser by number (e.g. /attach open 1)"})
@@ -1550,6 +1560,8 @@ func (m *AppModel) updateDetail(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "E":
 			// Open in external editor
 			return m, openExternalEditorCmd(m.editableDescription())
+		case "D":
+			return m, m.copyTaskDescription()
 		case "t":
 			m.parentTaskID = m.selectedTask.ID
 			m.state = stateCreateSubtask
@@ -1968,6 +1980,10 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.refreshEditDescLayout()
 					m.descInput.Focus()
 					return m, textarea.Blink
+				}
+			} else if strings.HasPrefix(val, "/copydesc") {
+				if m.prevState == stateTaskDetail {
+					return m, m.copyTaskDescription()
 				}
 			} else if strings.HasPrefix(val, "/editext") {
 				if m.prevState == stateTaskDetail {
@@ -2393,6 +2409,7 @@ func (m *AppModel) updateHelpContent() {
 	b.WriteString("• /move            : Move this ticket to another list\n")
 	b.WriteString("• /assign <user>   : Assign the ticket to a user\n")
 	b.WriteString("• /desc            : Edit description (inline)\n")
+	b.WriteString("• /copydesc        : Copy ticket description to clipboard\n")
 	b.WriteString("• /editext         : Edit description in external $EDITOR\n")
 	b.WriteString("• /subtask         : Create a new subtask\n")
 	b.WriteString("• /attach open <n>     : Open attachment preview in browser\n")
@@ -2401,6 +2418,7 @@ func (m *AppModel) updateHelpContent() {
 	b.WriteString("• c                : Add a comment\n")
 	b.WriteString("• e                : Edit description (inline)\n")
 	b.WriteString("• E                : Edit description in external $EDITOR\n")
+	b.WriteString("• D                : Copy ticket description\n")
 	b.WriteString("• t                : Create a new subtask\n")
 	b.WriteString("• s                : Copy ticket URL to clipboard\n")
 	b.WriteString("• r                : Refresh current view from API\n\n")
@@ -2500,7 +2518,7 @@ func (m *AppModel) View() string {
 		}
 		mainContent = view
 	case stateTaskDetail:
-		hint := lipgloss.NewStyle().Foreground(ColorSubtext).Render("q: back • a/n: new task • c: comment • e: edit desc • E: vim edit • t: subtask • o: open • s: copy • r: refresh")
+		hint := lipgloss.NewStyle().Foreground(ColorSubtext).Render("q: back • a/n: new task • c: comment • e: edit desc • E: vim edit • D: copy desc • t: subtask • o: open • s: copy • r: refresh")
 		mainContent = m.vp.View() + "\n" + hint
 	case stateHelp:
 		mainContent = m.vp.View()
