@@ -33,6 +33,7 @@ const (
 	stateCreateTask
 	stateMovePicker
 	stateEditDesc
+	stateCreateSubtask
 )
 
 // Item Wrappers
@@ -125,6 +126,7 @@ type AppModel struct {
 	moveCandidateLists []clickup.List
 	moveTaskID         string
 	teamMembers        []clickup.Member
+	parentTaskID       string // used when creating subtasks
 	
 	loading    bool
 	loadingMsg string
@@ -179,6 +181,14 @@ func fetchTaskCmd(c *clickup.Client, taskID, teamID string) tea.Cmd {
 func createTaskCmd(c *clickup.Client, listID, name string) tea.Cmd {
 	return func() tea.Msg {
 		task, err := c.CreateTask(listID, name)
+		if err != nil { return errMsg(err) }
+		return taskCreatedMsg(*task)
+	}
+}
+
+func createSubtaskCmd(c *clickup.Client, listID, parentID, name string) tea.Cmd {
+	return func() tea.Msg {
+		task, err := c.CreateSubtask(listID, parentID, name)
 		if err != nil { return errMsg(err) }
 		return taskCreatedMsg(*task)
 	}
@@ -422,14 +432,19 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case taskCreatedMsg:
 		m.loading = false
 		newTask := clickup.Task(msg)
-		// Prepend so it appears at the top of the list
 		m.allTasks = append([]clickup.Task{newTask}, m.allTasks...)
 		m.applyTaskFilter("")
-		// Navigate directly into the new ticket
-		m.selectedTask = newTask
-		m.taskHistory = nil
-		m.state = stateTaskDetail
-		m.updateViewportContent()
+		// Navigate directly into the new ticket (unless it's a subtask — stay in parent)
+		if newTask.Parent == nil {
+			m.selectedTask = newTask
+			m.taskHistory = nil
+			m.state = stateTaskDetail
+			m.updateViewportContent()
+		} else {
+			// Refresh the parent task detail view to show new subtask
+			m.state = stateTaskDetail
+			m.updateViewportContent()
+		}
 		return m, nil
 	case moveListsReadyMsg:
 		m.loading = false
@@ -473,6 +488,8 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateMovePicker(msg)
 	case stateEditDesc:
 		return m.updateEditDesc(msg)
+	case stateCreateSubtask:
+		return m.updateCreateSubtask(msg)
 	}
 
 	return m, tea.Batch(cmds...)
@@ -558,6 +575,7 @@ func (m *AppModel) updateCommandSuggestions() {
 		sugs = append(sugs, Suggestion{"/move", "Move this ticket to another list"})
 		sugs = append(sugs, Suggestion{"/assign ", "Change assignee (e.g. /assign deep)"})
 		sugs = append(sugs, Suggestion{"/desc", "Edit the ticket description"})
+		sugs = append(sugs, Suggestion{"/subtask", "Add a subtask to this ticket"})
 
 		// Suggest all known workspace members
 		for _, member := range m.teamMembers {
@@ -812,6 +830,12 @@ func (m *AppModel) updateDetail(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.descInput.SetValue(m.selectedTask.Desc)
 			m.descInput.Focus()
 			return m, textarea.Blink
+		case "t":
+			m.parentTaskID = m.selectedTask.ID
+			m.state = stateCreateSubtask
+			m.taskInput.SetValue("")
+			m.taskInput.Focus()
+			return m, textinput.Blink
 		case "s":
 			if m.selectedTask.URL != "" {
 				clipboard.WriteAll(m.selectedTask.URL)
@@ -879,6 +903,30 @@ func (m *AppModel) updateCreateTask(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyEsc:
 			m.taskInput.Blur()
 			m.state = stateTasks
+			return m, nil
+		}
+	}
+	var cmd tea.Cmd
+	m.taskInput, cmd = m.taskInput.Update(msg)
+	return m, cmd
+}
+
+func (m *AppModel) updateCreateSubtask(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.Type {
+		case tea.KeyEnter:
+			name := strings.TrimSpace(m.taskInput.Value())
+			if name != "" {
+				m.taskInput.Blur()
+				m.state = stateTaskDetail
+				m.loading = true
+				m.loadingMsg = "Creating subtask..."
+				return m, tea.Batch(m.spinner.Tick, createSubtaskCmd(m.client, m.selectedList, m.parentTaskID, name))
+			}
+		case tea.KeyEsc:
+			m.taskInput.Blur()
+			m.state = stateTaskDetail
 			return m, nil
 		}
 	}
@@ -1101,6 +1149,14 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.descInput.Focus()
 					return m, textarea.Blink
 				}
+			} else if strings.HasPrefix(val, "/subtask") {
+				if m.prevState == stateTaskDetail {
+					m.parentTaskID = m.selectedTask.ID
+					m.state = stateCreateSubtask
+					m.taskInput.SetValue("")
+					m.taskInput.Focus()
+					return m, textinput.Blink
+				}
 			} else if strings.HasPrefix(val, "/assign ") {
 				if m.prevState == stateTaskDetail {
 					// Kick off background member fetch if not already done
@@ -1309,6 +1365,10 @@ func (m *AppModel) View() string {
 		mainContent = m.vp.View() + "\n\n" + m.commentInput.View() + "\n(Enter to submit, Esc to cancel)"
 	case stateCreateTask:
 		mainContent = m.activeList.View() + "\n\n" + lipgloss.NewStyle().Bold(true).Render("New Task: ") + m.taskInput.View() + "\n" + lipgloss.NewStyle().Foreground(ColorSubtext).Render("Enter to create | Esc to cancel")
+	case stateCreateSubtask:
+		header := TitleStyle.Render(fmt.Sprintf("New Subtask of: %s", m.selectedTask.Name))
+		hint := lipgloss.NewStyle().Foreground(ColorSubtext).Render("Enter to create | Esc to cancel")
+		mainContent = header + "\n\n" + lipgloss.NewStyle().Bold(true).Render("Subtask name: ") + m.taskInput.View() + "\n" + hint
 	case stateMovePicker:
 		var sb strings.Builder
 		sb.WriteString(TitleStyle.Render("Move Ticket To List") + "\n\n")

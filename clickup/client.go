@@ -282,6 +282,22 @@ func (c *Client) CreateTask(listID, name string) (*Task, error) {
 	return &task, nil
 }
 
+// CreateSubtask creates a new subtask under a parent task
+func (c *Client) CreateSubtask(listID, parentID, name string) (*Task, error) {
+	endpoint := fmt.Sprintf("/list/%s/task", listID)
+	reqBody := map[string]interface{}{"name": name, "parent": parentID}
+	body, _ := json.Marshal(reqBody)
+	data, err := c.doReq("POST", endpoint, body)
+	if err != nil {
+		return nil, err
+	}
+	var task Task
+	if err := json.Unmarshal(data, &task); err != nil {
+		return nil, err
+	}
+	return &task, nil
+}
+
 // DeleteTask deletes a task by ID
 func (c *Client) DeleteTask(taskID string) error {
 	endpoint := fmt.Sprintf("/task/%s", taskID)
