@@ -960,6 +960,18 @@ func (m *AppModel) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.taskInput.Focus()
 				return m, textinput.Blink
 			}
+		case "o":
+			if m.state == stateTasks {
+				if i, ok := m.activeList.SelectedItem().(taskItem); ok {
+					if i.URL != "" {
+						m.popupMsg = "Opening in Browser..."
+						return m, tea.Batch(
+							openAttachmentURLCmd(i.URL),
+							tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} }),
+						)
+					}
+				}
+			}
 		case "r":
 			m.loading = true
 			switch m.state {
@@ -1065,6 +1077,15 @@ func (m *AppModel) updateDetail(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.loading = true
 				m.loadingMsg = "Fetching subtask details..."
 				return m, tea.Batch(m.spinner.Tick, fetchTaskCmd(m.client, subtasks[idx].ID, m.selectedTeam))
+			}
+			return m, nil
+		case "o":
+			if m.selectedTask.URL != "" {
+				m.popupMsg = "Opening in Browser..."
+				return m, tea.Batch(
+					openAttachmentURLCmd(m.selectedTask.URL),
+					tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} }),
+				)
 			}
 			return m, nil
 		case "r":
@@ -1769,7 +1790,7 @@ func (m *AppModel) View() string {
 	case stateTeams, stateSpaces, stateLists, stateTasks:
 		mainContent = m.activeList.View()
 	case stateTaskDetail:
-		hint := lipgloss.NewStyle().Foreground(ColorSubtext).Render("q: back | c: comment | e: edit desc | E: vim edit | t: subtask | s: copy | r: refresh")
+		hint := lipgloss.NewStyle().Foreground(ColorSubtext).Render("q: back | c: comment | e: edit desc | E: vim edit | t: subtask | o: open | s: copy | r: refresh")
 		mainContent = m.vp.View() + "\n" + hint
 	case stateHelp:
 		mainContent = m.vp.View()
