@@ -622,8 +622,12 @@ func (m *AppModel) updateLayout() {
 	m.tasksList.SetSize(m.width-h, contentH)
 	m.vp.Width = m.width - h
 	m.vp.Height = contentH
-	m.descInput.SetWidth(m.width - h)
-	m.descInput.SetHeight(contentH)
+	if m.state == stateEditDesc {
+		m.refreshEditDescLayout()
+	} else {
+		m.descInput.SetWidth(m.width - h)
+		m.descInput.SetHeight(contentH)
+	}
 }
 
 func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -841,6 +845,76 @@ func (m *AppModel) editableDescription() string {
 		return m.selectedTask.MarkdownDescription
 	}
 	return m.selectedTask.Desc
+}
+
+func (m *AppModel) refreshEditDescLayout() {
+	h, _ := BaseStyle.GetFrameSize()
+	contentW := m.width - h
+	if contentW < 40 {
+		contentW = 40
+	}
+	paneGap := 1
+	editorPaneW := (contentW - paneGap) / 2
+	if editorPaneW < 20 {
+		editorPaneW = 20
+	}
+	editorChrome := 6
+	editorW := editorPaneW - editorChrome
+	if editorW < 10 {
+		editorW = 10
+	}
+	m.descInput.SetWidth(editorW)
+	m.descInput.SetHeight(m.vp.Height - 4)
+	if m.vp.Height < 8 {
+		m.descInput.SetHeight(5)
+	}
+}
+
+func (m *AppModel) renderEditDesc() string {
+	paneGap := 1
+	contentW := m.vp.Width
+	if contentW < 40 {
+		contentW = 40
+	}
+	editorPaneW := (contentW - paneGap) / 2
+	previewPaneW := contentW - editorPaneW - paneGap
+	if previewPaneW < 20 {
+		previewPaneW = 20
+	}
+
+	panelStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(ColorBorder).
+		Padding(0, 1).
+		Height(m.vp.Height)
+
+	editorPanel := panelStyle.Width(editorPaneW)
+	previewPanel := panelStyle.Width(previewPaneW)
+
+	previewWidth := previewPaneW - 4
+	if previewWidth < 10 {
+		previewWidth = 10
+	}
+
+	previewContent := strings.TrimSpace(m.descInput.Value())
+	if previewContent == "" {
+		previewContent = "_Nothing to preview yet._"
+	}
+
+	renderedPreview := previewContent
+	if m.renderer != nil {
+		if out, err := m.renderer.Render(previewContent); err == nil {
+			renderedPreview = out
+		}
+	}
+
+	left := editorPanel.Render(SectionHeaderStyle.Render("MARKDOWN") + "\n\n" + m.descInput.View())
+	right := previewPanel.Render(SectionHeaderStyle.Render("PREVIEW") + "\n\n" + renderedPreview)
+
+	header := TitleStyle.Render(fmt.Sprintf("Editing: %s", m.selectedTask.Name))
+	hint := lipgloss.NewStyle().Foreground(ColorSubtext).Render("Ctrl+S to save | Esc to cancel")
+
+	return header + "\n\n" + lipgloss.JoinHorizontal(lipgloss.Top, left, strings.Repeat(" ", paneGap), right) + "\n" + hint
 }
 
 func (m *AppModel) filterSuggestions() {
@@ -1233,6 +1307,7 @@ func (m *AppModel) updateDetail(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "e":
 			m.state = stateEditDesc
 			m.descInput.SetValue(m.editableDescription())
+			m.refreshEditDescLayout()
 			m.descInput.Focus()
 			return m, textarea.Blink
 		case "E":
@@ -1639,6 +1714,7 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.prevState == stateTaskDetail {
 					m.state = stateEditDesc
 					m.descInput.SetValue(m.editableDescription())
+					m.refreshEditDescLayout()
 					m.descInput.Focus()
 					return m, textarea.Blink
 				}
@@ -2140,9 +2216,7 @@ func (m *AppModel) View() string {
 		sb.WriteString("\n" + lipgloss.NewStyle().Foreground(ColorSubtext).Render("Up/Down to select | Enter to move | Esc to cancel"))
 		mainContent = sb.String()
 	case stateEditDesc:
-		header := TitleStyle.Render(fmt.Sprintf("Editing: %s", m.selectedTask.Name))
-		hint := lipgloss.NewStyle().Foreground(ColorSubtext).Render("Ctrl+S to save | Esc to cancel")
-		mainContent = header + "\n\n" + m.descInput.View() + "\n" + hint
+		mainContent = m.renderEditDesc()
 	case stateEditComment:
 		mainContent = m.vp.View() + "\n\n" + TitleStyle.Render("Editing Comment:") + "\n" + m.commentInput.View() + "\n(Ctrl+S to save, Ctrl+E for Vim, Esc to cancel)"
 	case stateCommand:
