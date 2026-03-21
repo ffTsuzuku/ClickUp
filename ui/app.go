@@ -472,6 +472,14 @@ type profileReloadMsg struct {
 	Model *AppModel
 	Popup string
 }
+type spaceCreatedMsg struct {
+	Spaces []clickup.Space
+	Name   string
+}
+type listCreatedMsg struct {
+	Hierarchy *clickup.SpaceHierarchy
+	Name      string
+}
 type teamMembersMsg []clickup.Member
 type commentAddedMsg struct{}
 type editorFinishedMsg struct {
@@ -576,6 +584,38 @@ func fetchListsCmd(c *clickup.Client, spaceID string) tea.Cmd {
 			return errMsg(err)
 		}
 		return listsMsg(lists)
+	}
+}
+
+func createSpaceCmd(c *clickup.Client, teamID, name string) tea.Cmd {
+	return func() tea.Msg {
+		if _, err := c.CreateSpace(teamID, name); err != nil {
+			return errMsg(err)
+		}
+		spaces, err := c.GetSpaces(teamID)
+		if err != nil {
+			return errMsg(err)
+		}
+		return spaceCreatedMsg{Spaces: spaces, Name: name}
+	}
+}
+
+func createListCmd(c *clickup.Client, spaceID, folderID, name string) tea.Cmd {
+	return func() tea.Msg {
+		var err error
+		if folderID != "" {
+			_, err = c.CreateList(folderID, name)
+		} else {
+			_, err = c.CreateFolderlessList(spaceID, name)
+		}
+		if err != nil {
+			return errMsg(err)
+		}
+		hierarchy, err := c.GetSpaceLists(spaceID)
+		if err != nil {
+			return errMsg(err)
+		}
+		return listCreatedMsg{Hierarchy: hierarchy, Name: name}
 	}
 }
 
@@ -1115,6 +1155,35 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.teamsList.SetItems(items)
 		return m, nil
+	case spaceCreatedMsg:
+		m.loading = false
+		m.allSpaces = msg.Spaces
+		var items []list.Item
+		for _, s := range msg.Spaces {
+			items = append(items, spaceItem(s))
+		}
+		m.spacesList.SetItems(items)
+		m.state = stateSpaces
+		m.activeList = &m.spacesList
+		m.popupMsg = "Created space " + msg.Name
+		return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+	case listCreatedMsg:
+		m.loading = false
+		m.allFolders = msg.Hierarchy.Folders
+		m.allLists = msg.Hierarchy.Lists
+		m.selectedFolder = nil
+		var items []list.Item
+		for _, f := range m.allFolders {
+			items = append(items, folderItem(f))
+		}
+		for _, l := range m.allLists {
+			items = append(items, listItem(l))
+		}
+		m.listsList.SetItems(items)
+		m.state = stateLists
+		m.activeList = &m.listsList
+		m.popupMsg = "Created list " + msg.Name
+		return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
 	case editorFinishedMsg:
 		if msg.err == nil && msg.content != "" {
 			content := strings.TrimRight(msg.content, "\n")
@@ -1351,6 +1420,8 @@ func (m *AppModel) updateCommandSuggestions() {
 	sugs = append(sugs, Suggestion{"/help", "Show help documentation"})
 	sugs = append(sugs, Suggestion{"/ticket ", "Open a ticket directly by ID"})
 	sugs = append(sugs, Suggestion{"/search ", "Search tickets across the workspace"})
+	sugs = append(sugs, Suggestion{"/space create ", "Create a new Space in the current Workspace"})
+	sugs = append(sugs, Suggestion{"/list create ", "Create a new List in the current Folder or Space"})
 	sugs = append(sugs, Suggestion{"/profile list", "List available ClickUp profiles"})
 	sugs = append(sugs, Suggestion{"/profile create ", "Create a new empty profile and switch to it"})
 	sugs = append(sugs, Suggestion{"/profile switch ", "Switch to another profile"})
@@ -2082,6 +2153,44 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.loadingMsg = "Searching tickets..."
 					return m, tea.Batch(m.spinner.Tick, searchTasksCmd(m.client, teamID, query))
 				}
+			} else if strings.HasPrefix(val, "/space create ") {
+				name := strings.TrimSpace(strings.TrimPrefix(val, "/space create "))
+				if name == "" {
+					m.popupMsg = "Error: space name required"
+					return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+				}
+				teamID := m.selectedTeam
+				if teamID == "" && m.cfg != nil {
+					teamID = m.cfg.ClickupTeamID
+				}
+				if teamID == "" {
+					m.popupMsg = "Error: select a Workspace first"
+					return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+				}
+				m.loading = true
+				m.loadingMsg = "Creating space..."
+				return m, tea.Batch(m.spinner.Tick, createSpaceCmd(m.client, teamID, name))
+			} else if strings.HasPrefix(val, "/list create ") {
+				name := strings.TrimSpace(strings.TrimPrefix(val, "/list create "))
+				if name == "" {
+					m.popupMsg = "Error: list name required"
+					return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+				}
+				if m.selectedSpace == "" {
+					m.popupMsg = "Error: select a Space first"
+					return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+				}
+				folderID := ""
+				if m.selectedFolder != nil {
+					folderID = m.selectedFolder.ID
+				}
+				m.loading = true
+				if folderID != "" {
+					m.loadingMsg = "Creating list in folder..."
+				} else {
+					m.loadingMsg = "Creating list in space..."
+				}
+				return m, tea.Batch(m.spinner.Tick, createListCmd(m.client, m.selectedSpace, folderID, name))
 			} else if strings.HasPrefix(val, "/profile list") {
 				names := m.cfg.ProfileNames()
 				for i, name := range names {
@@ -2710,6 +2819,8 @@ func (m *AppModel) updateHelpContent() {
 	b.WriteString("• /ticket <id>             : Jump directly to a ticket from anywhere (e.g. /ticket OMNI-123)\n")
 	b.WriteString("• /search <text>           : Search tickets across the workspace\n")
 	b.WriteString("• /search status:<status> assignee:<name> <text> : Search with filters\n")
+	b.WriteString("• /space create <name>     : Create a new Space in the current Workspace\n")
+	b.WriteString("• /list create <name>      : Create a new List in the current Folder or Space\n")
 	b.WriteString("• /profile list            : Show available profiles\n")
 	b.WriteString("• /profile create <name>   : Create a new empty profile and switch to it\n")
 	b.WriteString("• /profile switch <name>   : Switch to a saved profile\n")
