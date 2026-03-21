@@ -125,6 +125,19 @@ func (t taskItem) FilterValue() string {
 	return fmt.Sprintf("id:%s assignee:%s status:%s title:%s %s %s", idLower, assignee, status, title, t.Name, idLower)
 }
 
+func formatClickUpTimestamp(ts string) string {
+	if ts == "" {
+		return "Unknown"
+	}
+
+	ms, err := strconv.ParseInt(ts, 10, 64)
+	if err != nil {
+		return ts
+	}
+
+	return time.UnixMilli(ms).Local().Format("Jan 2, 2006 3:04 PM")
+}
+
 type Suggestion struct {
 	Text string
 	Desc string
@@ -2188,7 +2201,14 @@ func (m *AppModel) updateViewportContent() {
 		pts = fmt.Sprintf("%v", *m.selectedTask.Points)
 	}
 
+	creator := "Unknown"
+	if m.selectedTask.Creator.Username != "" {
+		creator = m.selectedTask.Creator.Username
+	}
+
 	b.WriteString(LabelStyle.Width(15).Render("Assignee:") + assignee + "\n")
+	b.WriteString(LabelStyle.Width(15).Render("Created:") + formatClickUpTimestamp(m.selectedTask.DateCreated) + "\n")
+	b.WriteString(LabelStyle.Width(15).Render("Created By:") + creator + "\n")
 	b.WriteString(LabelStyle.Width(15).Render("Priority:") + priority + "\n")
 	b.WriteString(LabelStyle.Width(15).Render("Story Points:") + pts + "\n\n")
 

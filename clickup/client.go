@@ -207,17 +207,19 @@ func (c *Client) GetTeamMembers(teamID string) ([]Member, error) {
 }
 
 type Task struct {
-	ID          string     `json:"id"`
-	CustomID    string     `json:"custom_id"`
-	Name        string     `json:"name"`
-	Desc        string      `json:"description"`
-	Status      TaskStatus  `json:"status"`
-	Assignees   []Assignee  `json:"assignees"`
-	URL         string      `json:"url"`
-	Points      *float64    `json:"points"`
-	Priority    *Priority    `json:"priority,omitempty"`
-	Parent      *string     `json:"parent,omitempty"`
-	Attachments []Attachment `json:"attachments"`
+	ID                  string       `json:"id"`
+	CustomID            string       `json:"custom_id"`
+	Name                string       `json:"name"`
+	Desc                string       `json:"description"`
+	Status              TaskStatus   `json:"status"`
+	Assignees           []Assignee   `json:"assignees"`
+	URL                 string       `json:"url"`
+	Points              *float64     `json:"points"`
+	Priority            *Priority    `json:"priority,omitempty"`
+	Parent              *string      `json:"parent,omitempty"`
+	Attachments         []Attachment `json:"attachments"`
+	DateCreated         string       `json:"date_created"`
+	Creator             Assignee     `json:"creator"`
 	MarkdownDescription string `json:"markdown_description"`
 }
 
