@@ -178,10 +178,13 @@ type Member struct {
 }
 
 type Comment struct {
-	ID          string   `json:"id"`
-	CommentText string   `json:"comment_text"`
-	User        Assignee `json:"user"`
-	Date        string   `json:"date"`
+	ID          string    `json:"id"`
+	CommentText string    `json:"comment_text"`
+	User        Assignee  `json:"user"`
+	Date        string    `json:"date"`
+	Parent      *string   `json:"parent,omitempty"`
+	Replies     []Comment `json:"replies"`
+	ReplyCount  int       `json:"reply_count"`
 }
 
 type Attachment struct {
@@ -254,15 +257,16 @@ func (c *Client) GetTask(taskID string, teamID string) (*Task, error) {
 
 // AddComment is a mock for now (requires view task detail parsing or specific endpoint)
 func (c *Client) AddComment(taskID, comment, parentID string) error {
-	// Real ClickUp Create Comment endpoint is POST /task/{task_id}/comment
-	endpoint := fmt.Sprintf("/task/%s/comment", taskID)
+	var endpoint string
+	if parentID != "" {
+		endpoint = fmt.Sprintf("/comment/%s/reply", parentID)
+	} else {
+		endpoint = fmt.Sprintf("/task/%s/comment", taskID)
+	}
 	
 	reqBody := map[string]interface{}{
 		"comment_text": comment,
 		"notify_all":   true,
-	}
-	if parentID != "" {
-		reqBody["parent"] = parentID
 	}
 	body, _ := json.Marshal(reqBody)
 	
@@ -388,6 +392,21 @@ func (c *Client) GetUser() (*Assignee, error) {
 		return nil, err
 	}
 	return &result.User, nil
+}
+
+func (c *Client) GetCommentReplies(commentID string) ([]Comment, error) {
+	endpoint := fmt.Sprintf("/comment/%s/reply", commentID)
+	data, err := c.doReq("GET", endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	var result struct {
+		Comments []Comment `json:"comments"`
+	}
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, err
+	}
+	return result.Comments, nil
 }
 
 func (c *Client) GetTaskComments(taskID string) ([]Comment, error) {

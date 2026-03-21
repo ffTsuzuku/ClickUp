@@ -227,13 +227,42 @@ func fetchTaskCmd(c *clickup.Client, taskID, teamID string) tea.Cmd {
 			return errMsg(err)
 		}
 		
-		comments, _ := c.GetTaskComments(task.ID) // Use internal ID for comments
+		comments, _ := fetchCommentsRecursive(task.ID, c)
 		
 		return taskDetailMsg{
 			Task:     task,
 			Comments: comments,
 		}
 	}
+}
+
+func fetchCommentsRecursive(taskID string, c *clickup.Client) ([]clickup.Comment, error) {
+	allComments, err := c.GetTaskComments(taskID)
+	if err != nil { return nil, err }
+	
+	var topLevel []clickup.Comment
+	for _, c := range allComments {
+		if c.Parent == nil || *c.Parent == "" {
+			topLevel = append(topLevel, c)
+		}
+	}
+	
+	// Sort top-level oldest to newest (API returns newest first)
+	for i, j := 0, len(topLevel)-1; i < j; i, j = i+1, j-1 {
+		topLevel[i], topLevel[j] = topLevel[j], topLevel[i]
+	}
+	
+	for i := range topLevel {
+		if topLevel[i].ReplyCount > 0 {
+			replies, _ := c.GetCommentReplies(topLevel[i].ID)
+			// Sort replies oldest to newest as well
+			for i, j := 0, len(replies)-1; i < j; i, j = i+1, j-1 {
+				replies[i], replies[j] = replies[j], replies[i]
+			}
+			topLevel[i].Replies = replies
+		}
+	}
+	return flattenComments(topLevel), nil
 }
 
 func createTaskCmd(c *clickup.Client, listID, name string, userID int) tea.Cmd {
@@ -275,7 +304,7 @@ func addCommentCmd(c *clickup.Client, taskID, comment, parentID string) tea.Cmd 
 
 func fetchCommentsCmd(c *clickup.Client, taskID string) tea.Cmd {
 	return func() tea.Msg {
-		comments, err := c.GetTaskComments(taskID)
+		comments, err := fetchCommentsRecursive(taskID, c)
 		if err != nil { return errMsg(err) }
 		return commentsMsg(comments)
 	}
@@ -594,12 +623,7 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = false
 		m.selectedTask = *msg.Task
 		
-		// Sort comments oldest to newest (API returns newest first)
-		comments := msg.Comments
-		for i, j := 0, len(comments)-1; i < j; i, j = i+1, j-1 {
-			comments[i], comments[j] = comments[j], comments[i]
-		}
-		m.selectedComments = comments
+		m.selectedComments = msg.Comments
 
 		if m.state != stateTaskDetail {
 			m.taskHistory = nil
@@ -682,13 +706,7 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		)
 	case commentsMsg:
 		m.loading = false
-		// Sort comments oldest to newest (API returns newest first)
-		comments := []clickup.Comment(msg)
-		for i, j := 0, len(comments)-1; i < j; i, j = i+1, j-1 {
-			comments[i], comments[j] = comments[j], comments[i]
-		}
-		m.selectedComments = comments
-
+		m.selectedComments = msg
 		m.updateViewportContent()
 		return m, nil
 	case errMsg:
@@ -1783,7 +1801,13 @@ func (m *AppModel) updateViewportContent() {
 	if len(m.selectedComments) > 0 {
 		for i, c := range m.selectedComments {
 			author := lipgloss.NewStyle().Foreground(ColorSecondary).Bold(true).Render(c.User.Username)
-			b.WriteString(fmt.Sprintf("%d. %s: %s\n", i+1, author, c.CommentText))
+			
+			prefix := ""
+			if c.Parent != nil && *c.Parent != "" {
+				prefix = "  ↳ "
+			}
+			
+			b.WriteString(fmt.Sprintf("%s%d. %s: %s\n", prefix, i+1, author, c.CommentText))
 		}
 	} else {
 		b.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext).Render("No comments."))
@@ -1995,4 +2019,22 @@ func (m *AppModel) View() string {
 
 	fullUI := m.renderHeader() + "\n" + mainContent + "\n\n" + bottomBar
 	return BaseStyle.Render(fullUI)
+}
+
+func flattenComments(comments []clickup.Comment) []clickup.Comment {
+	var flat []clickup.Comment
+	for _, c := range comments {
+		flat = append(flat, c)
+		if len(c.Replies) > 0 {
+			// Ensure parent ID is set for children to trigger indentation logic
+			for i := range c.Replies {
+				if c.Replies[i].Parent == nil || *c.Replies[i].Parent == "" {
+					pID := c.ID
+					c.Replies[i].Parent = &pID
+				}
+			}
+			flat = append(flat, flattenComments(c.Replies)...)
+		}
+	}
+	return flat
 }
