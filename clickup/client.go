@@ -220,6 +220,12 @@ type Task struct {
 	MarkdownDescription string `json:"markdown_description"`
 }
 
+func normalizeTask(task *Task) {
+	if task.MarkdownDescription != "" {
+		task.Desc = task.MarkdownDescription
+	}
+}
+
 func (c *Client) GetTasks(listID string) ([]Task, error) {
 	endpoint := fmt.Sprintf("/list/%s/task?subtasks=true&include_markdown_description=true", listID)
 	data, err := c.doReq("GET", endpoint, nil)
@@ -232,6 +238,9 @@ func (c *Client) GetTasks(listID string) ([]Task, error) {
 	}
 	if err := json.Unmarshal(data, &result); err != nil {
 		return nil, err
+	}
+	for i := range result.Tasks {
+		normalizeTask(&result.Tasks[i])
 	}
 	return result.Tasks, nil
 }
@@ -253,6 +262,7 @@ func (c *Client) GetTask(taskID string, teamID string) (*Task, error) {
 	if err := json.Unmarshal(data, &task); err != nil {
 		return nil, err
 	}
+	normalizeTask(&task)
 	return &task, nil
 }
 
@@ -317,6 +327,7 @@ func (c *Client) CreateTask(listID, name string, assignees []int) (*Task, error)
 	if err := json.Unmarshal(data, &task); err != nil {
 		return nil, err
 	}
+	normalizeTask(&task)
 	return &task, nil
 }
 
@@ -336,6 +347,7 @@ func (c *Client) CreateSubtask(listID, parentID, name string, assignees []int) (
 	if err := json.Unmarshal(data, &task); err != nil {
 		return nil, err
 	}
+	normalizeTask(&task)
 	return &task, nil
 }
 

@@ -42,46 +42,57 @@ const (
 
 // Item Wrappers
 type teamItem clickup.Team
+
 func (t teamItem) Title() string       { return t.Name }
 func (t teamItem) Description() string { return "Workspace (" + t.ID + ")" }
 func (t teamItem) FilterValue() string { return t.Name }
 
 type spaceItem clickup.Space
+
 func (t spaceItem) Title() string       { return t.Name }
 func (t spaceItem) Description() string { return "Space" }
 func (t spaceItem) FilterValue() string { return t.Name }
 
 type listItem clickup.List
+
 func (t listItem) Title() string       { return t.Name }
 func (t listItem) Description() string { return "List" }
 func (t listItem) FilterValue() string { return t.Name }
 
 type folderItem clickup.Folder
+
 func (f folderItem) Title() string       { return f.Name }
 func (f folderItem) Description() string { return "Folder" }
 func (f folderItem) FilterValue() string { return f.Name }
 
 type taskItem clickup.Task
+
 func (t taskItem) Title() string {
 	id := t.ID
 	if t.CustomID != "" {
 		id = t.CustomID
 	}
-	return fmt.Sprintf("[%s] %s", id, t.Name) 
+	return fmt.Sprintf("[%s] %s", id, t.Name)
 }
-func (t taskItem) Description() string { 
+func (t taskItem) Description() string {
 	assignee := "unassigned"
-	if len(t.Assignees) > 0 { assignee = strings.ToLower(t.Assignees[0].Username) }
+	if len(t.Assignees) > 0 {
+		assignee = strings.ToLower(t.Assignees[0].Username)
+	}
 	pts := "0"
-	if t.Points != nil { pts = fmt.Sprintf("%v", *t.Points) }
-	
+	if t.Points != nil {
+		pts = fmt.Sprintf("%v", *t.Points)
+	}
+
 	priority := lipgloss.NewStyle().Foreground(ColorSubtext).Render("NONE")
 	if t.Priority != nil {
 		pColor := t.Priority.Color
-		if pColor == "" { pColor = "#6e7681" }
+		if pColor == "" {
+			pColor = "#6e7681"
+		}
 		priority = lipgloss.NewStyle().Foreground(lipgloss.Color(pColor)).Bold(true).Render(strings.ToUpper(t.Priority.Priority))
 	}
-	
+
 	status := t.Status.Status
 	switch strings.ToLower(status) {
 	case "todo", "open":
@@ -91,22 +102,24 @@ func (t taskItem) Description() string {
 	case "done", "complete", "closed":
 		status = StatusDoneStyle.Render(status)
 	}
-	
-	return fmt.Sprintf("Status: %s | %s | PTS: %s | PRI: %s", status, assignee, pts, priority) 
+
+	return fmt.Sprintf("Status: %s | %s | PTS: %s | PRI: %s", status, assignee, pts, priority)
 }
-func (t taskItem) FilterValue() string { 
+func (t taskItem) FilterValue() string {
 	assignee := "unassigned"
-	if len(t.Assignees) > 0 { assignee = strings.ToLower(t.Assignees[0].Username) }
-	
+	if len(t.Assignees) > 0 {
+		assignee = strings.ToLower(t.Assignees[0].Username)
+	}
+
 	title := strings.ToLower(t.Name)
 	status := strings.ToLower(t.Status.Status)
-	
+
 	id := t.ID
 	if t.CustomID != "" {
 		id = t.CustomID
 	}
 	idLower := strings.ToLower(id)
-	
+
 	return fmt.Sprintf("id:%s assignee:%s status:%s title:%s %s %s", idLower, assignee, status, title, t.Name, idLower)
 }
 
@@ -116,25 +129,25 @@ type Suggestion struct {
 }
 
 type AppModel struct {
-	state        state
-	prevState    state
-	cfg          *config.Config
-	client       *clickup.Client
-	
-	activeList   *list.Model
+	state     state
+	prevState state
+	cfg       *config.Config
+	client    *clickup.Client
 
-	teamsList    list.Model
-	spacesList   list.Model
-	listsList    list.Model
-	tasksList    list.Model
-	
-	allTeams        []clickup.Team
-	allSpaces       []clickup.Space
-	allFolders      []clickup.Folder
-	allLists        []clickup.List
-	allTasks        []clickup.Task
-	
-	selectedFolder  *clickup.Folder
+	activeList *list.Model
+
+	teamsList  list.Model
+	spacesList list.Model
+	listsList  list.Model
+	tasksList  list.Model
+
+	allTeams   []clickup.Team
+	allSpaces  []clickup.Space
+	allFolders []clickup.Folder
+	allLists   []clickup.List
+	allTasks   []clickup.Task
+
+	selectedFolder *clickup.Folder
 
 	commentInput textarea.Model
 	taskInput    textinput.Model // used for create / rename
@@ -144,33 +157,33 @@ type AppModel struct {
 	renderer     *glamour.TermRenderer
 	width        int
 	height       int
-	
+
 	suggestions     []Suggestion
 	filteredSuggest []Suggestion
 	suggestIdx      int
-	
-	selectedTeam  string
-	selectedSpace string
-	selectedList  string
+
+	selectedTeam       string
+	selectedSpace      string
+	selectedList       string
 	selectedTask       clickup.Task
 	taskHistory        []clickup.Task
 	moveCandidateLists []clickup.List
 	moveTaskID         string
 	teamMembers        []clickup.Member
 	parentTaskID       string // used when creating subtasks
-	
+
 	loading    bool
 	loadingMsg string
 	spinner    spinner.Model
 	popupMsg   string
-	
+
 	selectedComments []clickup.Comment
 	editingCommentID string
 	replyToCommentID string
 	replyToUser      string
 	currentUser      string
 	currentUserID    int
-	err error
+	err              error
 }
 
 type teamsMsg []clickup.Team
@@ -188,12 +201,17 @@ type taskCreatedMsg clickup.Task
 type moveListsReadyMsg *clickup.SpaceHierarchy
 type teamMembersMsg []clickup.Member
 type commentAddedMsg struct{}
-type editorFinishedMsg struct{ content string; err error }
+type editorFinishedMsg struct {
+	content string
+	err     error
+}
 
 func fetchTeamsCmd(c *clickup.Client) tea.Cmd {
 	return func() tea.Msg {
 		teams, err := c.GetTeams()
-		if err != nil { return errMsg(err) }
+		if err != nil {
+			return errMsg(err)
+		}
 		return teamsMsg(teams)
 	}
 }
@@ -201,7 +219,9 @@ func fetchTeamsCmd(c *clickup.Client) tea.Cmd {
 func fetchSpacesCmd(c *clickup.Client, teamID string) tea.Cmd {
 	return func() tea.Msg {
 		spaces, err := c.GetSpaces(teamID)
-		if err != nil { return errMsg(err) }
+		if err != nil {
+			return errMsg(err)
+		}
 		return spacesMsg(spaces)
 	}
 }
@@ -209,7 +229,9 @@ func fetchSpacesCmd(c *clickup.Client, teamID string) tea.Cmd {
 func fetchListsCmd(c *clickup.Client, spaceID string) tea.Cmd {
 	return func() tea.Msg {
 		lists, err := c.GetSpaceLists(spaceID)
-		if err != nil { return errMsg(err) }
+		if err != nil {
+			return errMsg(err)
+		}
 		return listsMsg(lists)
 	}
 }
@@ -217,7 +239,9 @@ func fetchListsCmd(c *clickup.Client, spaceID string) tea.Cmd {
 func fetchTasksCmd(c *clickup.Client, listID string) tea.Cmd {
 	return func() tea.Msg {
 		tasks, err := c.GetTasks(listID)
-		if err != nil { return errMsg(err) }
+		if err != nil {
+			return errMsg(err)
+		}
 		return tasksMsg(tasks)
 	}
 }
@@ -228,9 +252,9 @@ func fetchTaskCmd(c *clickup.Client, taskID, teamID string) tea.Cmd {
 		if err != nil {
 			return errMsg(err)
 		}
-		
+
 		comments, _ := fetchCommentsRecursive(task.ID, c)
-		
+
 		return taskDetailMsg{
 			Task:     task,
 			Comments: comments,
@@ -240,20 +264,22 @@ func fetchTaskCmd(c *clickup.Client, taskID, teamID string) tea.Cmd {
 
 func fetchCommentsRecursive(taskID string, c *clickup.Client) ([]clickup.Comment, error) {
 	allComments, err := c.GetTaskComments(taskID)
-	if err != nil { return nil, err }
-	
+	if err != nil {
+		return nil, err
+	}
+
 	var topLevel []clickup.Comment
 	for _, c := range allComments {
 		if c.Parent == nil || *c.Parent == "" {
 			topLevel = append(topLevel, c)
 		}
 	}
-	
+
 	// Sort top-level oldest to newest (API returns newest first)
 	for i, j := 0, len(topLevel)-1; i < j; i, j = i+1, j-1 {
 		topLevel[i], topLevel[j] = topLevel[j], topLevel[i]
 	}
-	
+
 	for i := range topLevel {
 		if topLevel[i].ReplyCount > 0 {
 			replies, _ := c.GetCommentReplies(topLevel[i].ID)
@@ -270,9 +296,13 @@ func fetchCommentsRecursive(taskID string, c *clickup.Client) ([]clickup.Comment
 func createTaskCmd(c *clickup.Client, listID, name string, userID int) tea.Cmd {
 	return func() tea.Msg {
 		var assignees []int
-		if userID != 0 { assignees = []int{userID} }
+		if userID != 0 {
+			assignees = []int{userID}
+		}
 		task, err := c.CreateTask(listID, name, assignees)
-		if err != nil { return errMsg(err) }
+		if err != nil {
+			return errMsg(err)
+		}
 		return taskCreatedMsg(*task)
 	}
 }
@@ -280,9 +310,13 @@ func createTaskCmd(c *clickup.Client, listID, name string, userID int) tea.Cmd {
 func createSubtaskCmd(c *clickup.Client, listID, parentID, name string, userID int) tea.Cmd {
 	return func() tea.Msg {
 		var assignees []int
-		if userID != 0 { assignees = []int{userID} }
+		if userID != 0 {
+			assignees = []int{userID}
+		}
 		task, err := c.CreateSubtask(listID, parentID, name, assignees)
-		if err != nil { return errMsg(err) }
+		if err != nil {
+			return errMsg(err)
+		}
 		return taskCreatedMsg(*task)
 	}
 }
@@ -290,7 +324,9 @@ func createSubtaskCmd(c *clickup.Client, listID, parentID, name string, userID i
 func fetchAllListsForMoveCmd(c *clickup.Client, spaceID string) tea.Cmd {
 	return func() tea.Msg {
 		lists, err := c.GetSpaceLists(spaceID)
-		if err != nil { return errMsg(err) }
+		if err != nil {
+			return errMsg(err)
+		}
 		return moveListsReadyMsg(lists)
 	}
 }
@@ -307,7 +343,9 @@ func addCommentCmd(c *clickup.Client, taskID, comment, parentID string) tea.Cmd 
 func fetchCommentsCmd(c *clickup.Client, taskID string) tea.Cmd {
 	return func() tea.Msg {
 		comments, err := fetchCommentsRecursive(taskID, c)
-		if err != nil { return errMsg(err) }
+		if err != nil {
+			return errMsg(err)
+		}
 		return commentsMsg(comments)
 	}
 }
@@ -352,15 +390,19 @@ func openAttachmentURLCmd(url string) tea.Cmd {
 func fetchTeamMembersCmd(c *clickup.Client, teamID string) tea.Cmd {
 	return func() tea.Msg {
 		members, err := c.GetTeamMembers(teamID)
-		if err != nil { return errMsg(err) }
+		if err != nil {
+			return errMsg(err)
+		}
 		return teamMembersMsg(members)
 	}
 }
 
 func openExternalEditorCmd(initialContent string) tea.Cmd {
 	editor := os.Getenv("EDITOR")
-	if editor == "" { editor = "vim" }
-	
+	if editor == "" {
+		editor = "vim"
+	}
+
 	// Write current content to a temp file
 	tmp, err := os.CreateTemp("", "clickup-desc-*.md")
 	if err != nil {
@@ -369,7 +411,7 @@ func openExternalEditorCmd(initialContent string) tea.Cmd {
 	tmp.WriteString(initialContent)
 	tmpPath := tmp.Name()
 	tmp.Close()
-	
+
 	c := exec.Command(editor, tmpPath)
 	return tea.ExecProcess(c, func(err error) tea.Msg {
 		if err != nil {
@@ -427,7 +469,7 @@ func InitialModel() *AppModel {
 	listsList := list.New(nil, list.NewDefaultDelegate(), 0, 0)
 	listsList.Title = "Select List"
 	listsList.SetFilteringEnabled(false)
-	
+
 	tasksList := list.New(nil, list.NewDefaultDelegate(), 0, 0)
 	tasksList.Title = "Tasks"
 	tasksList.SetFilteringEnabled(false)
@@ -468,27 +510,27 @@ func InitialModel() *AppModel {
 	s.Style = lipgloss.NewStyle().Foreground(ColorPrimary)
 
 	m := &AppModel{
-		state:        stateTeams,
-		prevState:    stateTeams,
-		cfg:          cfg,
-		client:       c,
-		teamsList:    teamsList,
-		spacesList:   spacesList,
-		listsList:    listsList,
-		tasksList:    tasksList,
-		allTeams:     allTeams,
-		commentInput: ci,
-		taskInput:    ti,
-		descInput:    da,
-		cmdInput:     cmd,
-		vp:           vp,
-		renderer:     r,
-		spinner:      s,
-		currentUser:  currentUser,
+		state:         stateTeams,
+		prevState:     stateTeams,
+		cfg:           cfg,
+		client:        c,
+		teamsList:     teamsList,
+		spacesList:    spacesList,
+		listsList:     listsList,
+		tasksList:     tasksList,
+		allTeams:      allTeams,
+		commentInput:  ci,
+		taskInput:     ti,
+		descInput:     da,
+		cmdInput:      cmd,
+		vp:            vp,
+		renderer:      r,
+		spinner:       s,
+		currentUser:   currentUser,
 		currentUserID: currentUserID,
 	}
 	m.activeList = &m.teamsList
-	
+
 	// Hydrate deep trees if configs are present
 	if cfg.ClickupTeamID != "" {
 		m.selectedTeam = cfg.ClickupTeamID
@@ -496,11 +538,13 @@ func InitialModel() *AppModel {
 		if err == nil {
 			m.allSpaces = spaces
 			var sItems []list.Item
-			for _, s := range spaces { sItems = append(sItems, spaceItem(s)) }
+			for _, s := range spaces {
+				sItems = append(sItems, spaceItem(s))
+			}
 			m.spacesList.SetItems(sItems)
 			m.state = stateSpaces
 			m.activeList = &m.spacesList
-			
+
 			if cfg.ClickupSpaceID != "" {
 				m.selectedSpace = cfg.ClickupSpaceID
 				hierarchy, err := c.GetSpaceLists(cfg.ClickupSpaceID)
@@ -509,18 +553,24 @@ func InitialModel() *AppModel {
 					m.allLists = hierarchy.Lists
 					m.selectedFolder = nil
 					var lItems []list.Item
-					for _, f := range m.allFolders { lItems = append(lItems, folderItem(f)) }
-					for _, l := range m.allLists { lItems = append(lItems, listItem(l)) }
+					for _, f := range m.allFolders {
+						lItems = append(lItems, folderItem(f))
+					}
+					for _, l := range m.allLists {
+						lItems = append(lItems, listItem(l))
+					}
 					m.listsList.SetItems(lItems)
 					m.state = stateLists
 					m.activeList = &m.listsList
-					
+
 					if cfg.ClickupFolderID != "" {
 						for _, f := range m.allFolders {
 							if f.ID == cfg.ClickupFolderID {
 								m.selectedFolder = &f
 								var items []list.Item
-								for _, l := range f.Lists { items = append(items, listItem(l)) }
+								for _, l := range f.Lists {
+									items = append(items, listItem(l))
+								}
 								m.listsList.SetItems(items)
 								break
 							}
@@ -541,7 +591,7 @@ func InitialModel() *AppModel {
 			}
 		}
 	}
-	
+
 	return m
 }
 
@@ -551,17 +601,17 @@ func (m *AppModel) Init() tea.Cmd {
 
 func (m *AppModel) updateLayout() {
 	h, v := BaseStyle.GetFrameSize()
-	
+
 	// Header is ~11-12 lines, plus 1 for sticky hint bar
-	contentH := m.height - v - 2 - 13 
-	
+	contentH := m.height - v - 2 - 13
+
 	if m.state == stateCommand {
 		menuH := len(m.filteredSuggest)
 		if menuH > 0 {
 			contentH -= (menuH + 1) // +1 for the newline spacing
 		}
 	}
-	
+
 	if contentH < 5 {
 		contentH = 5
 	}
@@ -585,7 +635,7 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyCtrlC:
 			return m, tea.Quit
 		}
-		
+
 		s := msg.String()
 		if (s == "/" || s == ":") && m.state != stateCommand && m.state != stateComment {
 			m.prevState = m.state
@@ -601,7 +651,7 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, textinput.Blink
 		}
-		
+
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -610,7 +660,9 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = false
 		m.allSpaces = msg
 		var items []list.Item
-		for _, s := range msg { items = append(items, spaceItem(s)) }
+		for _, s := range msg {
+			items = append(items, spaceItem(s))
+		}
 		m.spacesList.SetItems(items)
 		m.state = stateSpaces
 		m.activeList = &m.spacesList
@@ -621,8 +673,12 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.allLists = msg.Lists
 		m.selectedFolder = nil
 		var items []list.Item
-		for _, f := range m.allFolders { items = append(items, folderItem(f)) }
-		for _, l := range m.allLists { items = append(items, listItem(l)) }
+		for _, f := range m.allFolders {
+			items = append(items, folderItem(f))
+		}
+		for _, l := range m.allLists {
+			items = append(items, listItem(l))
+		}
 		m.listsList.SetItems(items)
 		m.state = stateLists
 		m.activeList = &m.listsList
@@ -638,7 +694,7 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case taskDetailMsg:
 		m.loading = false
 		m.selectedTask = *msg.Task
-		
+
 		m.selectedComments = msg.Comments
 
 		if m.state != stateTaskDetail {
@@ -668,7 +724,9 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = false
 		// Flatten for move picker (simpler for now)
 		var flat []clickup.List
-		for _, f := range msg.Folders { flat = append(flat, f.Lists...) }
+		for _, f := range msg.Folders {
+			flat = append(flat, f.Lists...)
+		}
 		flat = append(flat, msg.Lists...)
 		m.moveCandidateLists = flat
 		m.state = stateMovePicker
@@ -692,9 +750,11 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.state == stateEditDesc {
 				if err := m.client.UpdateDescription(m.selectedTask.ID, content); err == nil {
 					m.selectedTask.Desc = content
+					m.selectedTask.MarkdownDescription = content
 					for i, t := range m.allTasks {
 						if t.ID == m.selectedTask.ID {
 							m.allTasks[i].Desc = content
+							m.allTasks[i].MarkdownDescription = content
 							break
 						}
 					}
@@ -733,7 +793,7 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.popupMsg = ""
 		return m, nil
 	}
-	
+
 	if m.loading {
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
@@ -776,10 +836,17 @@ func (m *AppModel) getSubtasks(parentID string) []clickup.Task {
 	return res
 }
 
+func (m *AppModel) editableDescription() string {
+	if m.selectedTask.MarkdownDescription != "" {
+		return m.selectedTask.MarkdownDescription
+	}
+	return m.selectedTask.Desc
+}
+
 func (m *AppModel) filterSuggestions() {
 	v := strings.ToLower(m.cmdInput.Value())
 	words := strings.Split(v, " ")
-	
+
 	m.filteredSuggest = nil
 	for _, s := range m.suggestions {
 		text := strings.ToLower(s.Text)
@@ -803,24 +870,24 @@ func (m *AppModel) filterSuggestions() {
 
 func (m *AppModel) updateCommandSuggestions() {
 	var sugs []Suggestion
-	
+
 	sugs = append(sugs, Suggestion{"/clear", "Clear active list filters"})
 	sugs = append(sugs, Suggestion{"/help", "Show help documentation"})
 	sugs = append(sugs, Suggestion{"/ticket ", "Open a ticket directly by ID"})
-	
+
 	if m.prevState == stateTeams || m.prevState == stateSpaces || m.prevState == stateLists {
 		sugs = append(sugs, Suggestion{"/default set", "Set the currently highlighted item as your default routing"})
 	}
 	sugs = append(sugs, Suggestion{"/default user ", "Set a default assignee filter (e.g. /default user deep)"})
 	sugs = append(sugs, Suggestion{"/default user clear", "Clear default assignee filter"})
 	sugs = append(sugs, Suggestion{"/default clear", "Clear all default automatic routing"})
-	
+
 	if m.prevState == stateTasks && len(m.allTasks) > 0 {
 		sugs = append(sugs, Suggestion{"/filter assignee", "Filter by a specific assignee"})
 		sugs = append(sugs, Suggestion{"/filter status", "Filter by task status"})
 		sugs = append(sugs, Suggestion{"/filter title", "Filter by task title text"})
 		sugs = append(sugs, Suggestion{"/filter id", "Filter by task ID"})
-		
+
 		assignees := make(map[string]bool)
 		statuses := make(map[string]bool)
 		for _, t := range m.allTasks {
@@ -873,7 +940,7 @@ func (m *AppModel) updateCommandSuggestions() {
 				}
 			}
 		}
-		
+
 		statuses := make(map[string]bool)
 		for _, t := range m.allTasks {
 			statuses[strings.ToLower(t.Status.Status)] = true
@@ -897,7 +964,7 @@ func (m *AppModel) updateCommandSuggestions() {
 			sugs = append(sugs, Suggestion{"/filter " + strings.ToLower(t.Name), "Find list " + t.Name})
 		}
 	}
-	
+
 	m.suggestions = sugs
 	m.filterSuggestions()
 }
@@ -905,7 +972,7 @@ func (m *AppModel) updateCommandSuggestions() {
 func fuzzyMatch(term, target string) bool {
 	term = strings.ToLower(term)
 	target = strings.ToLower(target)
-	
+
 	tIdx := 0
 	for i := 0; i < len(term); i++ {
 		found := false
@@ -959,18 +1026,20 @@ func (m *AppModel) applyHierarchyFilter(query string) {
 func (m *AppModel) applyTaskFilter(query string) {
 	var items []list.Item
 	query = strings.ToLower(strings.TrimSpace(query))
-	
+
 	totalPoints := 0.0
 	defaultUser := strings.ToLower(m.cfg.ClickupUserName)
-	
+
 	for _, t := range m.allTasks {
 		if t.Parent != nil {
 			continue // Hide subtasks from the main root list view
 		}
-		
+
 		assignee := "unassigned"
-		if len(t.Assignees) > 0 { assignee = strings.ToLower(t.Assignees[0].Username) }
-		
+		if len(t.Assignees) > 0 {
+			assignee = strings.ToLower(t.Assignees[0].Username)
+		}
+
 		// If a default user is set, heavily prioritize it unless an explicit assignee override is typed
 		if defaultUser != "" && !strings.HasPrefix(query, "assignee ") && defaultUser != "clear" {
 			if !strings.Contains(assignee, defaultUser) && !fuzzyMatch(defaultUser, assignee) {
@@ -980,13 +1049,15 @@ func (m *AppModel) applyTaskFilter(query string) {
 
 		if query == "" {
 			items = append(items, taskItem(t))
-			if t.Points != nil { totalPoints += *t.Points }
+			if t.Points != nil {
+				totalPoints += *t.Points
+			}
 			continue
 		}
-		
+
 		status := strings.ToLower(t.Status.Status)
 		title := strings.ToLower(t.Name)
-		
+
 		id := t.ID
 		if t.CustomID != "" {
 			id = t.CustomID
@@ -1016,11 +1087,13 @@ func (m *AppModel) applyTaskFilter(query string) {
 		} else {
 			if fuzzyMatch(query, title) || fuzzyMatch(query, assignee) || fuzzyMatch(query, status) || fuzzyMatch(query, idLower) {
 				items = append(items, taskItem(t))
-				if t.Points != nil { totalPoints += *t.Points }
+				if t.Points != nil {
+					totalPoints += *t.Points
+				}
 			}
 		}
 	}
-	
+
 	m.tasksList.Title = fmt.Sprintf("Tasks (Total Points: %v)", totalPoints)
 	m.tasksList.SetItems(items)
 }
@@ -1037,8 +1110,12 @@ func (m *AppModel) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.selectedFolder != nil {
 					m.selectedFolder = nil
 					var items []list.Item
-					for _, f := range m.allFolders { items = append(items, folderItem(f)) }
-					for _, l := range m.allLists { items = append(items, listItem(l)) }
+					for _, f := range m.allFolders {
+						items = append(items, folderItem(f))
+					}
+					for _, l := range m.allLists {
+						items = append(items, listItem(l))
+					}
 					m.listsList.SetItems(items)
 					return m, nil
 				}
@@ -1105,7 +1182,9 @@ func (m *AppModel) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 					folder := clickup.Folder(i)
 					m.selectedFolder = &folder
 					var items []list.Item
-					for _, l := range folder.Lists { items = append(items, listItem(l)) }
+					for _, l := range folder.Lists {
+						items = append(items, listItem(l))
+					}
 					m.listsList.SetItems(items)
 					m.activeList.Select(0)
 					return m, nil
@@ -1128,7 +1207,7 @@ func (m *AppModel) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	}
-	
+
 	var cmd tea.Cmd
 	*m.activeList, cmd = m.activeList.Update(msg)
 	return m, cmd
@@ -1153,12 +1232,12 @@ func (m *AppModel) updateDetail(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, textinput.Blink
 		case "e":
 			m.state = stateEditDesc
-			m.descInput.SetValue(m.selectedTask.Desc)
+			m.descInput.SetValue(m.editableDescription())
 			m.descInput.Focus()
 			return m, textarea.Blink
 		case "E":
 			// Open in external editor
-			return m, openExternalEditorCmd(m.selectedTask.Desc)
+			return m, openExternalEditorCmd(m.editableDescription())
 		case "t":
 			m.parentTaskID = m.selectedTask.ID
 			m.state = stateCreateSubtask
@@ -1318,10 +1397,14 @@ func (m *AppModel) updateMovePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.updateViewportContent()
 			return m, nil
 		case "up", "k":
-			if m.suggestIdx > 0 { m.suggestIdx-- }
+			if m.suggestIdx > 0 {
+				m.suggestIdx--
+			}
 			return m, nil
 		case "down", "j":
-			if m.suggestIdx < len(m.moveCandidateLists)-1 { m.suggestIdx++ }
+			if m.suggestIdx < len(m.moveCandidateLists)-1 {
+				m.suggestIdx++
+			}
 			return m, nil
 		case "enter":
 			if m.suggestIdx < len(m.moveCandidateLists) {
@@ -1353,9 +1436,11 @@ func (m *AppModel) updateEditDesc(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.state = stateTaskDetail
 			if err := m.client.UpdateDescription(m.selectedTask.ID, desc); err == nil {
 				m.selectedTask.Desc = desc
+				m.selectedTask.MarkdownDescription = desc
 				for i, t := range m.allTasks {
 					if t.ID == m.selectedTask.ID {
 						m.allTasks[i].Desc = desc
+						m.allTasks[i].MarkdownDescription = desc
 						break
 					}
 				}
@@ -1420,13 +1505,13 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(m.filteredSuggest) > 0 && m.suggestIdx >= 0 {
 				val = m.filteredSuggest[m.suggestIdx].Text
 			}
-			
+
 			m.cmdInput.SetValue("")
 			m.cmdInput.Blur()
 			m.state = m.prevState
 			m.filterSuggestions()
 			m.updateLayout()
-			
+
 			if strings.HasPrefix(val, "/filter ") {
 				term := strings.TrimPrefix(val, "/filter ")
 				m.applyHierarchyFilter(term)
@@ -1533,7 +1618,9 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 						// Remove from local cache
 						var kept []clickup.Task
 						for _, t := range m.allTasks {
-							if t.ID != taskID { kept = append(kept, t) }
+							if t.ID != taskID {
+								kept = append(kept, t)
+							}
 						}
 						m.allTasks = kept
 						m.applyTaskFilter("")
@@ -1551,13 +1638,13 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else if strings.HasPrefix(val, "/desc") {
 				if m.prevState == stateTaskDetail {
 					m.state = stateEditDesc
-					m.descInput.SetValue(m.selectedTask.Desc)
+					m.descInput.SetValue(m.editableDescription())
 					m.descInput.Focus()
 					return m, textarea.Blink
 				}
 			} else if strings.HasPrefix(val, "/editext") {
 				if m.prevState == stateTaskDetail {
-					return m, openExternalEditorCmd(m.selectedTask.Desc)
+					return m, openExternalEditorCmd(m.editableDescription())
 				}
 			} else if strings.HasPrefix(val, "/subtask") {
 				if m.prevState == stateTaskDetail {
@@ -1650,7 +1737,9 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if addID != 0 {
 						var removes []int
 						for _, a := range m.selectedTask.Assignees {
-							if a.ID != addID { removes = append(removes, a.ID) }
+							if a.ID != addID {
+								removes = append(removes, a.ID)
+							}
 						}
 						taskID := m.selectedTask.ID
 						newAssignee := clickup.Assignee{ID: addID, Username: username}
@@ -1747,16 +1836,16 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *AppModel) updateViewportContent() {
 	var b strings.Builder
-	
+
 	id := m.selectedTask.ID
 	if m.selectedTask.CustomID != "" {
 		id = m.selectedTask.CustomID
 	}
-	
+
 	// Title & Status
 	b.WriteString(TitleStyle.Render(fmt.Sprintf("[%s] %s", id, m.selectedTask.Name)) + "\n")
-	b.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext).Render("Status: "+m.selectedTask.Status.Status))
-	
+	b.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext).Render("Status: " + m.selectedTask.Status.Status))
+
 	if m.selectedTask.Parent != nil {
 		parentID := *m.selectedTask.Parent
 		for _, t := range m.allTasks {
@@ -1768,29 +1857,35 @@ func (m *AppModel) updateViewportContent() {
 		b.WriteString(LabelStyle.Render(" | Parent: ") + ColorSecondaryStyle.Render(parentID))
 	}
 	b.WriteString("\n\n")
-	
+
 	divider := lipgloss.NewStyle().Foreground(ColorBorder).Render(strings.Repeat("─", m.width-10))
 	b.WriteString(divider + "\n\n")
 
 	// Metadata
 	assignee := "Unassigned"
-	if len(m.selectedTask.Assignees) > 0 { assignee = m.selectedTask.Assignees[0].Username }
-	
+	if len(m.selectedTask.Assignees) > 0 {
+		assignee = m.selectedTask.Assignees[0].Username
+	}
+
 	priority := "None"
 	if m.selectedTask.Priority != nil {
 		p := m.selectedTask.Priority
 		pColor := p.Color
-		if pColor == "" { pColor = "#6e7681" }
+		if pColor == "" {
+			pColor = "#6e7681"
+		}
 		priority = lipgloss.NewStyle().Foreground(lipgloss.Color(pColor)).Bold(true).Render(strings.ToUpper(p.Priority))
 	}
-	
+
 	pts := "0"
-	if m.selectedTask.Points != nil { pts = fmt.Sprintf("%v", *m.selectedTask.Points) }
+	if m.selectedTask.Points != nil {
+		pts = fmt.Sprintf("%v", *m.selectedTask.Points)
+	}
 
 	b.WriteString(LabelStyle.Width(15).Render("Assignee:") + assignee + "\n")
 	b.WriteString(LabelStyle.Width(15).Render("Priority:") + priority + "\n")
 	b.WriteString(LabelStyle.Width(15).Render("Story Points:") + pts + "\n\n")
-	
+
 	b.WriteString(divider + "\n\n")
 
 	// Description
@@ -1810,7 +1905,7 @@ func (m *AppModel) updateViewportContent() {
 			b.WriteString(out + "\n")
 		}
 	}
-	
+
 	b.WriteString(divider + "\n\n")
 
 	// Subtasks
@@ -1822,19 +1917,25 @@ func (m *AppModel) updateViewportContent() {
 			if t.CustomID != "" {
 				sid = t.CustomID
 			}
-			
+
 			assignee := "unassigned"
-			if len(t.Assignees) > 0 { assignee = strings.ToLower(t.Assignees[0].Username) }
+			if len(t.Assignees) > 0 {
+				assignee = strings.ToLower(t.Assignees[0].Username)
+			}
 			pts := "0"
-			if t.Points != nil { pts = fmt.Sprintf("%v", *t.Points) }
-			
+			if t.Points != nil {
+				pts = fmt.Sprintf("%v", *t.Points)
+			}
+
 			pStr := lipgloss.NewStyle().Foreground(ColorSubtext).Render("NONE")
 			if t.Priority != nil {
 				pColor := t.Priority.Color
-				if pColor == "" { pColor = "#6e7681" }
+				if pColor == "" {
+					pColor = "#6e7681"
+				}
 				pStr = lipgloss.NewStyle().Foreground(lipgloss.Color(pColor)).Bold(true).Render(strings.ToUpper(t.Priority.Priority))
 			}
-			
+
 			status := t.Status.Status
 			switch strings.ToLower(status) {
 			case "todo", "open":
@@ -1852,7 +1953,7 @@ func (m *AppModel) updateViewportContent() {
 		b.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext).Render("No subtasks."))
 	}
 	b.WriteString("\n")
-	
+
 	b.WriteString(divider + "\n\n")
 	b.WriteString(SectionHeaderStyle.Render("ATTACHMENTS") + "\n")
 	if len(m.selectedTask.Attachments) > 0 {
@@ -1869,12 +1970,12 @@ func (m *AppModel) updateViewportContent() {
 	if len(m.selectedComments) > 0 {
 		for i, c := range m.selectedComments {
 			author := lipgloss.NewStyle().Foreground(ColorSecondary).Bold(true).Render(c.User.Username)
-			
+
 			prefix := ""
 			if c.Parent != nil && *c.Parent != "" {
 				prefix = "  ↳ "
 			}
-			
+
 			b.WriteString(fmt.Sprintf("%s%d. %s: %s\n", prefix, i+1, author, c.CommentText))
 		}
 	} else {
@@ -1887,10 +1988,10 @@ func (m *AppModel) updateViewportContent() {
 
 func (m *AppModel) updateHelpContent() {
 	var b strings.Builder
-	
+
 	b.WriteString(TitleStyle.Render("ClickUp TUI - Help & Commands"))
 	b.WriteString("\n\n")
-	
+
 	b.WriteString(lipgloss.NewStyle().Bold(true).Render("Navigation"))
 	b.WriteString("\n")
 	b.WriteString("• Up/Down/j/k  : Navigate lists and text\n")
@@ -1956,13 +2057,13 @@ func (m *AppModel) renderHeader() string {
      \ \_____\  \ \_____\  \ \_\  \ \_____\  \ \_\ \_\  \ \_____\  \ \_\   
       \/_____/   \/_____/   \/_/   \/_____/   \/_/\/_/   \/_____/   \/_/   
 `
-	
+
 	banner := lipgloss.NewStyle().Foreground(ColorPrimary).Render(ascii)
 	version := lipgloss.NewStyle().Foreground(ColorSubtext).Render("v1.2.0")
-	
+
 	infoStyle := lipgloss.NewStyle().Foreground(ColorText)
 	userLine := infoStyle.Render("Signed in as: ") + ColorSecondaryStyle.Render(m.currentUser)
-	
+
 	workspace := "None"
 	if m.selectedTeam != "" {
 		for _, t := range m.allTeams {
@@ -1975,7 +2076,7 @@ func (m *AppModel) renderHeader() string {
 	workspaceLine := infoStyle.Render("Workspace: ") + ColorSecondaryStyle.Render(workspace)
 
 	headerInfo := fmt.Sprintf("\n  %s  %s\n\n  %s\n  %s", logo, version, userLine, workspaceLine)
-	
+
 	return lipgloss.JoinVertical(lipgloss.Left, banner, headerInfo)
 }
 
@@ -1983,7 +2084,7 @@ func (m *AppModel) View() string {
 	if m.width == 0 {
 		return "Starting..."
 	}
-	
+
 	if m.loading {
 		loadingBox := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(1, 4).Render(fmt.Sprintf("%s %s", m.spinner.View(), m.loadingMsg))
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, loadingBox)
@@ -2051,7 +2152,7 @@ func (m *AppModel) View() string {
 			mainContent = m.activeList.View()
 		}
 	}
-	
+
 	var sb strings.Builder
 	if m.state == stateCommand && len(m.filteredSuggest) > 0 {
 		sb.WriteString("\n")
@@ -2074,7 +2175,7 @@ func (m *AppModel) View() string {
 			}
 		}
 	}
-	
+
 	bottomBar := m.cmdInput.View() + sb.String()
 	if m.state != stateCommand {
 		bottomBar = lipgloss.NewStyle().Foreground(ColorSubtext).Render("Type / to enter command")
@@ -2094,7 +2195,7 @@ func (m *AppModel) View() string {
 			Bold(true).
 			Padding(0, 1).
 			Render(icon + m.popupMsg)
-			
+
 		shadow := lipgloss.NewStyle().Foreground(lipgloss.Color("234")).Render("▌")
 		popupStr := popupBox + shadow
 
