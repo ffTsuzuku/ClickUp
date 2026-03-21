@@ -1925,9 +1925,23 @@ func (m *AppModel) View() string {
 
 	switch m.state {
 	case stateTeams, stateSpaces, stateLists, stateTasks:
-		mainContent = m.activeList.View()
+		view := m.activeList.View()
+		if m.state == stateTasks {
+			// Integrate into the same row as the list help, but trim the justified whitespace
+			lines := strings.Split(view, "\n")
+			lastIdx := len(lines) - 1
+			for lastIdx >= 0 && strings.TrimSpace(lines[lastIdx]) == "" {
+				lastIdx--
+			}
+			if lastIdx >= 0 {
+				style := lipgloss.NewStyle().Foreground(ColorSubtext)
+				lines[lastIdx] = strings.TrimRight(lines[lastIdx], " ") + style.Render(" • a/n: new task • r: refresh")
+				view = strings.Join(lines, "\n")
+			}
+		}
+		mainContent = view
 	case stateTaskDetail:
-		hint := lipgloss.NewStyle().Foreground(ColorSubtext).Render("q: back | c: comment | e: edit desc | E: vim edit | t: subtask | o: open | s: copy | r: refresh")
+		hint := lipgloss.NewStyle().Foreground(ColorSubtext).Render("q: back • a/n: new task • c: comment • e: edit desc • E: vim edit • t: subtask • o: open • s: copy • r: refresh")
 		mainContent = m.vp.View() + "\n" + hint
 	case stateHelp:
 		mainContent = m.vp.View()
