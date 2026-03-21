@@ -1318,22 +1318,31 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 						config.SaveConfig(m.cfg)
 					}
 				}
+				m.popupMsg = "Default set successfully"
+				return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
 			} else if strings.HasPrefix(val, "/default user clear") {
 				m.cfg.ClickupUserName = ""
 				config.SaveConfig(m.cfg)
 				m.applyHierarchyFilter(strings.TrimPrefix(m.cmdInput.Value(), "/filter "))
+				m.popupMsg = "Default user cleared"
+				return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
 			} else if strings.HasPrefix(val, "/default user ") {
 				user := strings.TrimSpace(strings.TrimPrefix(val, "/default user "))
 				if user != "" && user != "clear" {
 					m.cfg.ClickupUserName = user
 					config.SaveConfig(m.cfg)
 					m.applyHierarchyFilter(strings.TrimPrefix(m.cmdInput.Value(), "/filter "))
+					m.popupMsg = fmt.Sprintf("Default user set: %s", user)
+					return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
 				}
 			} else if strings.HasPrefix(val, "/default clear") {
 				m.cfg.ClickupTeamID = ""
 				m.cfg.ClickupSpaceID = ""
 				m.cfg.ClickupListID = ""
+				m.cfg.ClickupUserName = ""
 				config.SaveConfig(m.cfg)
+				m.popupMsg = "All defaults cleared"
+				return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
 			}
 			return m, nil
 		case tea.KeyEsc:
