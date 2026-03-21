@@ -2,6 +2,8 @@ package ui
 
 import (
 	"fmt"
+	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -145,6 +147,7 @@ type clearPopupMsg struct{}
 type taskCreatedMsg clickup.Task
 type moveListsReadyMsg []clickup.List
 type teamMembersMsg []clickup.Member
+type editorFinishedMsg struct{ content string; err error }
 
 func fetchSpacesCmd(c *clickup.Client, teamID string) tea.Cmd {
 	return func() tea.Msg {
@@ -208,6 +211,34 @@ func fetchTeamMembersCmd(c *clickup.Client, teamID string) tea.Cmd {
 		if err != nil { return errMsg(err) }
 		return teamMembersMsg(members)
 	}
+}
+
+func openExternalEditorCmd(initialContent string) tea.Cmd {
+	editor := os.Getenv("EDITOR")
+	if editor == "" { editor = "vim" }
+	
+	// Write current content to a temp file
+	tmp, err := os.CreateTemp("", "clickup-desc-*.md")
+	if err != nil {
+		return func() tea.Msg { return editorFinishedMsg{err: err} }
+	}
+	tmp.WriteString(initialContent)
+	tmpPath := tmp.Name()
+	tmp.Close()
+	
+	c := exec.Command(editor, tmpPath)
+	return tea.ExecProcess(c, func(err error) tea.Msg {
+		if err != nil {
+			os.Remove(tmpPath)
+			return editorFinishedMsg{err: err}
+		}
+		data, readErr := os.ReadFile(tmpPath)
+		os.Remove(tmpPath)
+		if readErr != nil {
+			return editorFinishedMsg{err: readErr}
+		}
+		return editorFinishedMsg{content: string(data)}
+	})
 }
 
 func InitialModel() *AppModel {
@@ -454,7 +485,22 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case teamMembersMsg:
 		m.loading = false
 		m.teamMembers = []clickup.Member(msg)
-		// Re-open the command prompt so user can continue typing /assign
+		return m, nil
+	case editorFinishedMsg:
+		if msg.err == nil && msg.content != m.selectedTask.Desc {
+			desc := strings.TrimRight(msg.content, "\n")
+			if err := m.client.UpdateDescription(m.selectedTask.ID, desc); err == nil {
+				m.selectedTask.Desc = desc
+				for i, t := range m.allTasks {
+					if t.ID == m.selectedTask.ID {
+						m.allTasks[i].Desc = desc
+						break
+					}
+				}
+			}
+		}
+		m.state = stateTaskDetail
+		m.updateViewportContent()
 		return m, nil
 	case errMsg:
 		m.loading = false
@@ -574,7 +620,8 @@ func (m *AppModel) updateCommandSuggestions() {
 		sugs = append(sugs, Suggestion{"/delete", "Delete this ticket permanently"})
 		sugs = append(sugs, Suggestion{"/move", "Move this ticket to another list"})
 		sugs = append(sugs, Suggestion{"/assign ", "Change assignee (e.g. /assign deep)"})
-		sugs = append(sugs, Suggestion{"/desc", "Edit the ticket description"})
+		sugs = append(sugs, Suggestion{"/desc", "Edit the ticket description (inline)"})
+		sugs = append(sugs, Suggestion{"/editext", "Edit description in $EDITOR (vim etc)"})
 		sugs = append(sugs, Suggestion{"/subtask", "Add a subtask to this ticket"})
 
 		// Suggest all known workspace members
@@ -830,6 +877,9 @@ func (m *AppModel) updateDetail(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.descInput.SetValue(m.selectedTask.Desc)
 			m.descInput.Focus()
 			return m, textarea.Blink
+		case "E":
+			// Open in external editor
+			return m, openExternalEditorCmd(m.selectedTask.Desc)
 		case "t":
 			m.parentTaskID = m.selectedTask.ID
 			m.state = stateCreateSubtask
@@ -1148,6 +1198,10 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.descInput.SetValue(m.selectedTask.Desc)
 					m.descInput.Focus()
 					return m, textarea.Blink
+				}
+			} else if strings.HasPrefix(val, "/editext") {
+				if m.prevState == stateTaskDetail {
+					return m, openExternalEditorCmd(m.selectedTask.Desc)
 				}
 			} else if strings.HasPrefix(val, "/subtask") {
 				if m.prevState == stateTaskDetail {
