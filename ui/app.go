@@ -277,6 +277,13 @@ func deleteCommentCmd(c *clickup.Client, commentID string) tea.Cmd {
 	}
 }
 
+func openAttachmentURLCmd(url string) tea.Cmd {
+	return func() tea.Msg {
+		_ = exec.Command("open", url).Run()
+		return nil
+	}
+}
+
 func fetchTeamMembersCmd(c *clickup.Client, teamID string) tea.Cmd {
 	return func() tea.Msg {
 		members, err := c.GetTeamMembers(teamID)
@@ -758,6 +765,7 @@ func (m *AppModel) updateCommandSuggestions() {
 		sugs = append(sugs, Suggestion{"/desc", "Edit the ticket description (inline)"})
 		sugs = append(sugs, Suggestion{"/editext", "Edit description in $EDITOR (vim etc)"})
 		sugs = append(sugs, Suggestion{"/subtask", "Add a subtask to this ticket"})
+		sugs = append(sugs, Suggestion{"/attach open ", "Open an attachment in your browser by number (e.g. /attach open 1)"})
 		sugs = append(sugs, Suggestion{"/comment edit ", "Edit a comment by its number (e.g. /comment edit 1)"})
 		sugs = append(sugs, Suggestion{"/comment delete ", "Delete a comment by its number (e.g. /comment delete 1)"})
 
@@ -1401,6 +1409,19 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.taskInput.Focus()
 					return m, textinput.Blink
 				}
+			} else if strings.HasPrefix(val, "/attach open ") {
+				if m.prevState == stateTaskDetail {
+					ptStr := strings.TrimPrefix(val, "/attach open ")
+					idx, err := strconv.Atoi(ptStr)
+					if err == nil && idx > 0 && idx <= len(m.selectedTask.Attachments) {
+						url := m.selectedTask.Attachments[idx-1].URL
+						m.popupMsg = "Opening in Browser..."
+						return m, tea.Batch(
+							openAttachmentURLCmd(url),
+							tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} }),
+						)
+					}
+				}
 			} else if strings.HasPrefix(val, "/comment ") {
 				if m.prevState == stateTaskDetail {
 					parts := strings.Fields(val)
@@ -1610,8 +1631,19 @@ func (m *AppModel) updateViewportContent() {
 	} else {
 		b.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext).Render("No subtasks."))
 	}
-	b.WriteString("\n\n")
+	b.WriteString("\n")
 	
+	b.WriteString(divider + "\n\n")
+	b.WriteString(SectionHeaderStyle.Render("ATTACHMENTS") + "\n")
+	if len(m.selectedTask.Attachments) > 0 {
+		for i, a := range m.selectedTask.Attachments {
+			b.WriteString(fmt.Sprintf("%d. %s\n", i+1, a.Title))
+		}
+	} else {
+		b.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext).Render("No attachments."))
+	}
+	b.WriteString("\n\n")
+
 	b.WriteString(divider + "\n\n")
 	b.WriteString(SectionHeaderStyle.Render("COMMENTS") + "\n")
 	if len(m.selectedComments) > 0 {

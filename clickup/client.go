@@ -180,6 +180,13 @@ type Comment struct {
 	Date        string   `json:"date"`
 }
 
+type Attachment struct {
+	ID        string `json:"id"`
+	Title     string `json:"title"`
+	Extension string `json:"extension"`
+	URL       string `json:"url"`
+}
+
 func (c *Client) GetTeamMembers(teamID string) ([]Member, error) {
 	endpoint := fmt.Sprintf("/team/%s/member", teamID)
 	data, err := c.doReq("GET", endpoint, nil)
@@ -202,6 +209,7 @@ type Task struct {
 	Points      *float64    `json:"points"`
 	Priority    *Priority    `json:"priority,omitempty"`
 	Parent      *string     `json:"parent,omitempty"`
+	Attachments []Attachment `json:"attachments"`
 }
 
 func (c *Client) GetTasks(listID string) ([]Task, error) {
