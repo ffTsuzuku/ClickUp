@@ -15,6 +15,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/tsuzuku/clickup-tui/clickup"
@@ -140,6 +141,7 @@ type AppModel struct {
 	descInput    textarea.Model
 	cmdInput     textinput.Model
 	vp           viewport.Model
+	renderer     *glamour.TermRenderer
 	width        int
 	height       int
 	
@@ -456,6 +458,11 @@ func InitialModel() *AppModel {
 	vp := viewport.New(0, 0)
 	vp.Style = DetailStyle
 
+	r, _ := glamour.NewTermRenderer(
+		glamour.WithAutoStyle(),
+		glamour.WithWordWrap(80),
+	)
+
 	s := spinner.New()
 	s.Spinner = spinner.Dot
 	s.Style = lipgloss.NewStyle().Foreground(ColorPrimary)
@@ -475,6 +482,7 @@ func InitialModel() *AppModel {
 		descInput:    da,
 		cmdInput:     cmd,
 		vp:           vp,
+		renderer:     r,
 		spinner:      s,
 		currentUser:  currentUser,
 		currentUserID: currentUserID,
@@ -1787,10 +1795,20 @@ func (m *AppModel) updateViewportContent() {
 
 	// Description
 	b.WriteString(SectionHeaderStyle.Render("DESCRIPTION") + "\n")
-	if m.selectedTask.Desc == "" {
+	desc := m.selectedTask.MarkdownDescription
+	if desc == "" {
+		desc = m.selectedTask.Desc
+	}
+
+	if desc == "" {
 		b.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext).Italic(true).Render("No description provided.") + "\n\n")
 	} else {
-		b.WriteString(m.selectedTask.Desc + "\n\n")
+		out, err := m.renderer.Render(desc)
+		if err != nil {
+			b.WriteString(desc + "\n\n")
+		} else {
+			b.WriteString(out + "\n")
+		}
 	}
 	
 	b.WriteString(divider + "\n\n")

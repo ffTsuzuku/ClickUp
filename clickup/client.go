@@ -217,10 +217,11 @@ type Task struct {
 	Priority    *Priority    `json:"priority,omitempty"`
 	Parent      *string     `json:"parent,omitempty"`
 	Attachments []Attachment `json:"attachments"`
+	MarkdownDescription string `json:"markdown_description"`
 }
 
 func (c *Client) GetTasks(listID string) ([]Task, error) {
-	endpoint := fmt.Sprintf("/list/%s/task?subtasks=true", listID)
+	endpoint := fmt.Sprintf("/list/%s/task?subtasks=true&include_markdown_description=true", listID)
 	data, err := c.doReq("GET", endpoint, nil)
 	if err != nil {
 		return nil, err
@@ -240,9 +241,9 @@ func (c *Client) GetTask(taskID string, teamID string) (*Task, error) {
 	if strings.Contains(taskID, "-") {
 		taskID = strings.ToUpper(taskID)
 	}
-	endpoint := fmt.Sprintf("/task/%s", taskID)
+	endpoint := fmt.Sprintf("/task/%s?include_markdown_description=true", taskID)
 	if teamID != "" && strings.Contains(taskID, "-") {
-		endpoint = fmt.Sprintf("/task/%s?custom_task_ids=true&team_id=%s", taskID, teamID)
+		endpoint = fmt.Sprintf("/task/%s?custom_task_ids=true&team_id=%s&include_markdown_description=true", taskID, teamID)
 	}
 	data, err := c.doReq("GET", endpoint, nil)
 	if err != nil {
