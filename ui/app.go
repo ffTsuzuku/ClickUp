@@ -216,6 +216,22 @@ type searchResultsMsg struct {
 	Tasks []clickup.Task
 }
 
+type searchQuery struct {
+	Raw      string
+	Text     string
+	Status   string
+	Assignee string
+	Title    string
+	ID       string
+}
+
+func normalizeSearchValue(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	s = strings.ReplaceAll(s, "-", " ")
+	s = strings.ReplaceAll(s, "_", " ")
+	return s
+}
+
 func fetchTeamsCmd(c *clickup.Client) tea.Cmd {
 	return func() tea.Msg {
 		teams, err := c.GetTeams()
@@ -408,18 +424,72 @@ func fetchTeamMembersCmd(c *clickup.Client, teamID string) tea.Cmd {
 	}
 }
 
-func scoreSearchMatch(query string, task clickup.Task) int {
-	query = strings.ToLower(strings.TrimSpace(query))
+func parseSearchQuery(raw string) searchQuery {
+	raw = strings.TrimSpace(raw)
+	parts := strings.Fields(raw)
+	q := searchQuery{Raw: raw}
+	var textParts []string
+	for _, part := range parts {
+		lower := strings.ToLower(part)
+		switch {
+		case strings.HasPrefix(lower, "status:"):
+			q.Status = normalizeSearchValue(strings.TrimPrefix(lower, "status:"))
+		case strings.HasPrefix(lower, "assignee:"):
+			q.Assignee = normalizeSearchValue(strings.TrimPrefix(lower, "assignee:"))
+		case strings.HasPrefix(lower, "title:"):
+			q.Title = normalizeSearchValue(strings.TrimPrefix(lower, "title:"))
+		case strings.HasPrefix(lower, "id:"):
+			q.ID = normalizeSearchValue(strings.TrimPrefix(lower, "id:"))
+		default:
+			textParts = append(textParts, part)
+		}
+	}
+	q.Text = normalizeSearchValue(strings.Join(textParts, " "))
+	return q
+}
+
+func matchesSearchFilters(q searchQuery, task clickup.Task) bool {
+	status := normalizeSearchValue(task.Status.Status)
+	assignee := "unassigned"
+	if len(task.Assignees) > 0 {
+		assignee = normalizeSearchValue(task.Assignees[0].Username)
+	}
+	title := normalizeSearchValue(task.Name)
+	id := normalizeSearchValue(task.ID)
+	if task.CustomID != "" {
+		id = normalizeSearchValue(task.CustomID)
+	}
+
+	if q.Status != "" && !strings.Contains(status, q.Status) && !fuzzyMatch(q.Status, status) {
+		return false
+	}
+	if q.Assignee != "" && !strings.Contains(assignee, q.Assignee) && !fuzzyMatch(q.Assignee, assignee) {
+		return false
+	}
+	if q.Title != "" && !strings.Contains(title, q.Title) && !fuzzyMatch(q.Title, title) {
+		return false
+	}
+	if q.ID != "" && !strings.Contains(id, q.ID) && !fuzzyMatch(q.ID, id) {
+		return false
+	}
+	return true
+}
+
+func scoreSearchMatch(q searchQuery, task clickup.Task) int {
+	query := q.Text
 	if query == "" {
+		if q.ID != "" || q.Title != "" || q.Status != "" || q.Assignee != "" {
+			return 1
+		}
 		return 0
 	}
 
-	id := strings.ToLower(task.ID)
+	id := normalizeSearchValue(task.ID)
 	if task.CustomID != "" {
-		id = strings.ToLower(task.CustomID)
+		id = normalizeSearchValue(task.CustomID)
 	}
-	title := strings.ToLower(task.Name)
-	desc := strings.ToLower(task.Desc)
+	title := normalizeSearchValue(task.Name)
+	desc := normalizeSearchValue(task.Desc)
 
 	switch {
 	case id == query:
@@ -449,6 +519,7 @@ func searchTasksCmd(c *clickup.Client, teamID, query string) tea.Cmd {
 			return errMsg(fmt.Errorf("global search requires a workspace/team to be selected or configured"))
 		}
 
+		parsed := parseSearchQuery(query)
 		seen := make(map[string]bool)
 		var matches []clickup.Task
 		for page := 0; page < 10; page++ {
@@ -464,7 +535,10 @@ func searchTasksCmd(c *clickup.Client, teamID, query string) tea.Cmd {
 					continue
 				}
 				seen[task.ID] = true
-				if scoreSearchMatch(query, task) > 0 {
+				if !matchesSearchFilters(parsed, task) {
+					continue
+				}
+				if scoreSearchMatch(parsed, task) > 0 {
 					matches = append(matches, task)
 				}
 			}
@@ -474,8 +548,8 @@ func searchTasksCmd(c *clickup.Client, teamID, query string) tea.Cmd {
 		}
 
 		sort.SliceStable(matches, func(i, j int) bool {
-			si := scoreSearchMatch(query, matches[i])
-			sj := scoreSearchMatch(query, matches[j])
+			si := scoreSearchMatch(parsed, matches[i])
+			sj := scoreSearchMatch(parsed, matches[j])
 			if si != sj {
 				return si > sj
 			}
@@ -494,7 +568,7 @@ func searchTasksCmd(c *clickup.Client, teamID, query string) tea.Cmd {
 			matches = matches[:100]
 		}
 
-		return searchResultsMsg{Query: query, Tasks: matches}
+		return searchResultsMsg{Query: parsed.Raw, Tasks: matches}
 	}
 }
 
@@ -1071,6 +1145,8 @@ func (m *AppModel) updateCommandSuggestions() {
 	sugs = append(sugs, Suggestion{"/help", "Show help documentation"})
 	sugs = append(sugs, Suggestion{"/ticket ", "Open a ticket directly by ID"})
 	sugs = append(sugs, Suggestion{"/search ", "Search tickets across the workspace"})
+	sugs = append(sugs, Suggestion{"/search status:in progress", "Search tickets filtered by status"})
+	sugs = append(sugs, Suggestion{"/search assignee:deep api", "Search tickets filtered by assignee plus text"})
 
 	if m.prevState == stateTeams || m.prevState == stateSpaces || m.prevState == stateLists {
 		sugs = append(sugs, Suggestion{"/default set", "Set the currently highlighted item as your default routing"})
@@ -2237,6 +2313,7 @@ func (m *AppModel) updateHelpContent() {
 	b.WriteString("• /filter id <id>          : Filter tasks by exact ID\n")
 	b.WriteString("• /ticket <id>             : Jump directly to a ticket from anywhere (e.g. /ticket OMNI-123)\n")
 	b.WriteString("• /search <text>           : Search tickets across the workspace\n")
+	b.WriteString("• /search status:<status> assignee:<name> <text> : Search with filters\n")
 	b.WriteString("• /clear                   : Clear active filters\n\n")
 
 	b.WriteString(lipgloss.NewStyle().Bold(true).Render("Task Actions (when viewing a task)"))
