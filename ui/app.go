@@ -404,8 +404,8 @@ func (m *AppModel) Init() tea.Cmd {
 func (m *AppModel) updateLayout() {
 	h, v := BaseStyle.GetFrameSize()
 	
-	// Header is ~11-12 lines now with ASCII art
-	contentH := m.height - v - 2 - 12 
+	// Header is ~11-12 lines, plus 1 for sticky hint bar
+	contentH := m.height - v - 2 - 13 
 	
 	if m.state == stateCommand {
 		menuH := len(m.filteredSuggest)
@@ -1425,10 +1425,6 @@ func (m *AppModel) updateViewportContent() {
 	}
 	b.WriteString("\n\n")
 
-	b.WriteString("\n\n")
-	help := lipgloss.NewStyle().Foreground(ColorSubtext).Render("q: back | c: comment | e: edit desc | E: vim edit | t: subtask | s: copy | r: refresh")
-	b.WriteString(help)
-
 	m.vp.SetContent(b.String())
 }
 
@@ -1542,7 +1538,8 @@ func (m *AppModel) View() string {
 	case stateTeams, stateSpaces, stateLists, stateTasks:
 		mainContent = m.activeList.View()
 	case stateTaskDetail:
-		mainContent = m.vp.View()
+		hint := lipgloss.NewStyle().Foreground(ColorSubtext).Render("q: back | c: comment | e: edit desc | E: vim edit | t: subtask | s: copy | r: refresh")
+		mainContent = m.vp.View() + "\n" + hint
 	case stateHelp:
 		mainContent = m.vp.View()
 	case stateComment:
