@@ -33,4 +33,5 @@ var (
 	StatusTodoStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#8b949e"))
 	StatusInProgressStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#f1e05a"))
 	StatusDoneStyle = lipgloss.NewStyle().Foreground(ColorSecondary)
+	ColorSecondaryStyle = lipgloss.NewStyle().Foreground(ColorSecondary).Bold(true)
 )

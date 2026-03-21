@@ -135,6 +135,7 @@ type AppModel struct {
 	spinner    spinner.Model
 	popupMsg   string
 	
+	currentUser string
 	err error
 }
 
@@ -259,6 +260,19 @@ func InitialModel() *AppModel {
 
 	c := clickup.NewClient(cfg.ClickupAPIKey)
 
+	var currentUser string = "Unauthenticated"
+	// Fetch user identity if missing from config
+	if cfg.ClickupAPIKey != "NO_TOKEN" {
+		u, err := c.GetUser()
+		if err == nil {
+			currentUser = u.Username
+			if cfg.ClickupUserName == "" {
+				cfg.ClickupUserName = u.Username
+				config.SaveConfig(cfg)
+			}
+		}
+	}
+
 	var allTeams []clickup.Team
 	var items []list.Item
 	teams, err := c.GetTeams()
@@ -332,6 +346,7 @@ func InitialModel() *AppModel {
 		cmdInput:     cmd,
 		vp:           vp,
 		spinner:      s,
+		currentUser:  currentUser,
 	}
 	m.activeList = &m.teamsList
 	
@@ -383,7 +398,8 @@ func (m *AppModel) Init() tea.Cmd {
 func (m *AppModel) updateLayout() {
 	h, v := BaseStyle.GetFrameSize()
 	
-	contentH := m.height - v - 2 // reserved 2 lines for input/help bar
+	// Header is ~11-12 lines now with ASCII art
+	contentH := m.height - v - 2 - 12 
 	
 	if m.state == stateCommand {
 		menuH := len(m.filteredSuggest)
@@ -1339,9 +1355,8 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cfg.ClickupTeamID = ""
 				m.cfg.ClickupSpaceID = ""
 				m.cfg.ClickupListID = ""
-				m.cfg.ClickupUserName = ""
 				config.SaveConfig(m.cfg)
-				m.popupMsg = "All defaults cleared"
+				m.popupMsg = "Routing defaults cleared"
 				return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
 			}
 			return m, nil
@@ -1459,6 +1474,43 @@ func (m *AppModel) updateHelpContent() {
 	m.vp.SetContent(b.String())
 }
 
+func (m *AppModel) renderHeader() string {
+	redStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#FF4D4D"))
+	whiteStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#FFFFFF"))
+	greenStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#00C853"))
+
+	logo := redStyle.Render("╺") + whiteStyle.Render("❯") + greenStyle.Render("╸")
+
+	ascii := `
+     ______     __         __     ______     __  __     __  __     ______  
+    /\  ___\   /\ \       /\ \   /\  ___\   /\ \/ /    /\ \/\ \   /\  == \ 
+    \ \ \____  \ \ \____  \ \ \  \ \ \____  \ \  _"-.  \ \ \_\ \  \ \  _-/ 
+     \ \_____\  \ \_____\  \ \_\  \ \_____\  \ \_\ \_\  \ \_____\  \ \_\   
+      \/_____/   \/_____/   \/_/   \/_____/   \/_/\/_/   \/_____/   \/_/   
+`
+	
+	banner := lipgloss.NewStyle().Foreground(ColorPrimary).Render(ascii)
+	version := lipgloss.NewStyle().Foreground(ColorSubtext).Render("v1.2.0")
+	
+	infoStyle := lipgloss.NewStyle().Foreground(ColorText)
+	userLine := infoStyle.Render("Signed in as: ") + ColorSecondaryStyle.Render(m.currentUser)
+	
+	workspace := "None"
+	if m.selectedTeam != "" {
+		for _, t := range m.allTeams {
+			if t.ID == m.selectedTeam {
+				workspace = t.Name
+				break
+			}
+		}
+	}
+	workspaceLine := infoStyle.Render("Workspace: ") + ColorSecondaryStyle.Render(workspace)
+
+	headerInfo := fmt.Sprintf("\n  %s  %s\n\n  %s\n  %s", logo, version, userLine, workspaceLine)
+	
+	return lipgloss.JoinVertical(lipgloss.Left, banner, headerInfo)
+}
+
 func (m *AppModel) View() string {
 	if m.width == 0 {
 		return "Starting..."
@@ -1558,6 +1610,6 @@ func (m *AppModel) View() string {
 		}
 	}
 
-	fullUI := mainContent + "\n\n" + bottomBar
+	fullUI := m.renderHeader() + "\n" + mainContent + "\n\n" + bottomBar
 	return BaseStyle.Render(fullUI)
 }

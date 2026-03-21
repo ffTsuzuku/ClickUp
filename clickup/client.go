@@ -339,3 +339,17 @@ func (c *Client) UpdateDescription(taskID, description string) error {
 	_, err := c.doReq("PUT", endpoint, body)
 	return err
 }
+// GetUser fetches the authenticated user's profile
+func (c *Client) GetUser() (*Assignee, error) {
+	data, err := c.doReq("GET", "/user", nil)
+	if err != nil {
+		return nil, err
+	}
+	var result struct {
+		User Assignee `json:"user"`
+	}
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, err
+	}
+	return &result.User, nil
+}
