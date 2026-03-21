@@ -439,3 +439,16 @@ func (c *Client) DeleteComment(commentID string) error {
 	_, err := c.doReq("DELETE", endpoint, nil)
 	return err
 }
+
+// SetTaskPriority updates the priority of a task (1: Urgent, 2: High, 3: Normal, 4: Low, nil: None)
+func (c *Client) SetTaskPriority(taskID string, priority *int) error {
+	endpoint := fmt.Sprintf("/task/%s", taskID)
+	
+	reqBody := map[string]interface{}{
+		"priority": priority,
+	}
+	body, _ := json.Marshal(reqBody)
+	
+	_, err := c.doReq("PUT", endpoint, body)
+	return err
+}

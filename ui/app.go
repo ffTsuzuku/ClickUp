@@ -319,6 +319,18 @@ func editCommentCmd(c *clickup.Client, commentID, text string) tea.Cmd {
 	}
 }
 
+func setPriorityCmd(c *clickup.Client, taskID, teamID string, priority *int) tea.Cmd {
+	return func() tea.Msg {
+		if err := c.SetTaskPriority(taskID, priority); err != nil {
+			return errMsg(err)
+		}
+		// Refresh task detail to show updated priority
+		task, _ := c.GetTask(taskID, teamID)
+		comments, _ := fetchCommentsRecursive(taskID, c)
+		return taskDetailMsg{Task: task, Comments: comments}
+	}
+}
+
 func deleteCommentCmd(c *clickup.Client, commentID string) tea.Cmd {
 	return func() tea.Msg {
 		if err := c.DeleteComment(commentID); err != nil {
@@ -828,6 +840,12 @@ func (m *AppModel) updateCommandSuggestions() {
 		sugs = append(sugs, Suggestion{"/attach open ", "Open an attachment in your browser by number (e.g. /attach open 1)"})
 		sugs = append(sugs, Suggestion{"/attach share ", "Copy an attachment URL to your clipboard by number (e.g. /attach share 1)"})
 		sugs = append(sugs, Suggestion{"/comment edit ", "Edit a comment by its number (e.g. /comment edit 1)"})
+		sugs = append(sugs, Suggestion{"/priority ", "Set task priority (urgent, high, normal, low, none)"})
+		sugs = append(sugs, Suggestion{"/priority urgent", "Set priority to Urgent"})
+		sugs = append(sugs, Suggestion{"/priority high", "Set priority to High"})
+		sugs = append(sugs, Suggestion{"/priority normal", "Set priority to Normal"})
+		sugs = append(sugs, Suggestion{"/priority low", "Set priority to Low"})
+		sugs = append(sugs, Suggestion{"/priority none", "Clear task priority"})
 		sugs = append(sugs, Suggestion{"/comment delete ", "Delete a comment by its number (e.g. /comment delete 1)"})
 		sugs = append(sugs, Suggestion{"/comment reply ", "Reply to a comment by its number (e.g. /comment reply 1)"})
 
@@ -1425,6 +1443,38 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					// Re-apply filter so lists reflect changes
 					m.applyHierarchyFilter(strings.TrimPrefix(m.cmdInput.Value(), "/filter "))
+				}
+			} else if strings.HasPrefix(val, "/priority ") {
+				if m.prevState == stateTaskDetail {
+					input := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(val, "/priority ")))
+					var p *int
+					valid := true
+					switch input {
+					case "urgent", "1":
+						v := 1
+						p = &v
+					case "high", "2":
+						v := 2
+						p = &v
+					case "normal", "3":
+						v := 3
+						p = &v
+					case "low", "4":
+						v := 4
+						p = &v
+					case "none", "no", "clear", "0":
+						p = nil
+					default:
+						valid = false
+					}
+					if valid {
+						m.loading = true
+						m.loadingMsg = "Updating priority..."
+						return m, tea.Batch(m.spinner.Tick, setPriorityCmd(m.client, m.selectedTask.ID, m.selectedTeam, p))
+					} else {
+						m.popupMsg = "Error: Invalid priority. Use urgent, high, normal, low, or none."
+						return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+					}
 				}
 			} else if strings.HasPrefix(val, "/ticket ") {
 				id := strings.TrimSpace(strings.TrimPrefix(val, "/ticket "))
