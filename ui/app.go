@@ -67,7 +67,13 @@ func (t taskItem) Description() string {
 	if len(t.Assignees) > 0 { assignee = strings.ToLower(t.Assignees[0].Username) }
 	pts := "0"
 	if t.Points != nil { pts = fmt.Sprintf("%v", *t.Points) }
-	return fmt.Sprintf("Status: %s | Assignee: %s | PTS: %s", t.Status.Status, assignee, pts) 
+	
+	priority := "none"
+	if t.Priority != nil {
+		priority = strings.ToLower(t.Priority.Priority)
+	}
+	
+	return fmt.Sprintf("Status: %s | Assignee: %s | PTS: %s | PRI: %s", t.Status.Status, assignee, pts, priority) 
 }
 func (t taskItem) FilterValue() string { 
 	assignee := "unassigned"
@@ -1386,7 +1392,16 @@ func (m *AppModel) updateViewportContent() {
 	
 	assignee := "Unassigned"
 	if len(m.selectedTask.Assignees) > 0 { assignee = m.selectedTask.Assignees[0].Username }
-	b.WriteString(lipgloss.NewStyle().Bold(true).Render("Assignee: ") + assignee + "\n\n")
+	b.WriteString(lipgloss.NewStyle().Bold(true).Render("Assignee: ") + assignee + "\n")
+	
+	priority := "None"
+	if m.selectedTask.Priority != nil {
+		p := m.selectedTask.Priority
+		pColor := p.Color
+		if pColor == "" { pColor = "#6e7681" }
+		priority = lipgloss.NewStyle().Foreground(lipgloss.Color(pColor)).Bold(true).Render(strings.ToUpper(p.Priority))
+	}
+	b.WriteString(lipgloss.NewStyle().Bold(true).Render("Priority: ") + priority + "\n\n")
 	
 	b.WriteString(lipgloss.NewStyle().Bold(true).Render("Description:") + "\n")
 	b.WriteString(m.selectedTask.Desc + "\n\n")

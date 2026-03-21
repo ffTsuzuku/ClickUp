@@ -159,6 +159,13 @@ type Assignee struct {
 	Username string `json:"username"`
 }
 
+type Priority struct {
+	ID         string `json:"id"`
+	Priority   string `json:"priority"`
+	Color      string `json:"color"`
+	OrderIndex string `json:"orderindex"`
+}
+
 type Member struct {
 	User struct {
 		ID       int    `json:"id"`
@@ -186,6 +193,7 @@ type Task struct {
 	Assignees   []Assignee  `json:"assignees"`
 	URL         string      `json:"url"`
 	Points      *float64    `json:"points"`
+	Priority    *Priority    `json:"priority,omitempty"`
 	Parent      interface{} `json:"parent,omitempty"`
 }
 
