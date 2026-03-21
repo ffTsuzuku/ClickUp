@@ -584,11 +584,8 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *AppModel) getSubtasks(parentID string) []clickup.Task {
 	var res []clickup.Task
 	for _, t := range m.allTasks {
-		if t.Parent != nil {
-			parentStr, ok := t.Parent.(string)
-			if ok && parentStr == parentID {
-				res = append(res, t)
-			}
+		if t.Parent != nil && *t.Parent == parentID {
+			res = append(res, t)
 		}
 	}
 	return res
@@ -1388,7 +1385,24 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *AppModel) updateViewportContent() {
 	var b strings.Builder
 	
-	b.WriteString(TitleStyle.Render(fmt.Sprintf("[%s] %s", m.selectedTask.Status.Status, m.selectedTask.Name)) + "\n\n")
+	id := m.selectedTask.ID
+	if m.selectedTask.CustomID != "" {
+		id = m.selectedTask.CustomID
+	}
+	
+	b.WriteString(TitleStyle.Render(fmt.Sprintf("[%s] %s", id, m.selectedTask.Name)) + "\n")
+	b.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext).Render("Status: "+m.selectedTask.Status.Status) + "\n\n")
+
+	if m.selectedTask.Parent != nil {
+		parentID := *m.selectedTask.Parent
+		for _, t := range m.allTasks {
+			if t.ID == parentID && t.CustomID != "" {
+				parentID = t.CustomID
+				break
+			}
+		}
+		b.WriteString(lipgloss.NewStyle().Bold(true).Render("Parent Task: ") + parentID + "\n\n")
+	}
 	
 	assignee := "Unassigned"
 	if len(m.selectedTask.Assignees) > 0 { assignee = m.selectedTask.Assignees[0].Username }
@@ -1414,11 +1428,11 @@ func (m *AppModel) updateViewportContent() {
 	subtasks := m.getSubtasks(m.selectedTask.ID)
 	if len(subtasks) > 0 {
 		for i, t := range subtasks {
-			id := t.ID
+			sid := t.ID
 			if t.CustomID != "" {
-				id = t.CustomID
+				sid = t.CustomID
 			}
-			b.WriteString(fmt.Sprintf("%d. [%s] %s (%s)\n", i+1, id, t.Name, t.Status.Status))
+			b.WriteString(fmt.Sprintf("%d. [%s] %s (%s)\n", i+1, sid, t.Name, t.Status.Status))
 		}
 	} else {
 		b.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext).Render("No subtasks."))

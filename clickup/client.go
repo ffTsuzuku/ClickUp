@@ -194,7 +194,7 @@ type Task struct {
 	URL         string      `json:"url"`
 	Points      *float64    `json:"points"`
 	Priority    *Priority    `json:"priority,omitempty"`
-	Parent      interface{} `json:"parent,omitempty"`
+	Parent      *string     `json:"parent,omitempty"`
 }
 
 func (c *Client) GetTasks(listID string) ([]Task, error) {
