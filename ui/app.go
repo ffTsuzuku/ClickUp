@@ -115,7 +115,7 @@ type AppModel struct {
 	allLists     []clickup.List
 	allTasks     []clickup.Task
 
-	commentInput textinput.Model
+	commentInput textarea.Model
 	taskInput    textinput.Model // used for create / rename
 	descInput    textarea.Model
 	cmdInput     textinput.Model
@@ -364,10 +364,10 @@ func InitialModel() *AppModel {
 	tasksList.Title = "Tasks"
 	tasksList.SetFilteringEnabled(false)
 
-	ci := textinput.New()
-	ci.Placeholder = "Type a comment..."
-	ci.CharLimit = 156
-	ci.Width = 40
+	ci := textarea.New()
+	ci.Placeholder = "Enter comment..."
+	ci.SetWidth(80)
+	ci.SetHeight(5)
 
 	cmd := textinput.New()
 	cmd.Placeholder = "Enter slash command (e.g. /filter) or /help..."
@@ -546,7 +546,14 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case taskDetailMsg:
 		m.loading = false
 		m.selectedTask = *msg.Task
-		m.selectedComments = msg.Comments
+		
+		// Sort comments oldest to newest (API returns newest first)
+		comments := msg.Comments
+		for i, j := 0, len(comments)-1; i < j; i, j = i+1, j-1 {
+			comments[i], comments[j] = comments[j], comments[i]
+		}
+		m.selectedComments = comments
+
 		if m.state != stateTaskDetail {
 			m.taskHistory = nil
 		}
@@ -589,21 +596,31 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.teamsList.SetItems(items)
 		return m, nil
 	case editorFinishedMsg:
-		if msg.err == nil && msg.content != m.selectedTask.Desc {
-			desc := strings.TrimRight(msg.content, "\n")
-			if err := m.client.UpdateDescription(m.selectedTask.ID, desc); err == nil {
-				m.selectedTask.Desc = desc
-				for i, t := range m.allTasks {
-					if t.ID == m.selectedTask.ID {
-						m.allTasks[i].Desc = desc
-						break
+		if msg.err == nil && msg.content != "" {
+			content := strings.TrimRight(msg.content, "\n")
+			if m.state == stateEditDesc {
+				if err := m.client.UpdateDescription(m.selectedTask.ID, content); err == nil {
+					m.selectedTask.Desc = content
+					for i, t := range m.allTasks {
+						if t.ID == m.selectedTask.ID {
+							m.allTasks[i].Desc = content
+							break
+						}
 					}
 				}
+			} else if m.state == stateEditComment {
+				m.loading = true
+				m.loadingMsg = "Updating comment..."
+				cmds = append(cmds, tea.Batch(m.spinner.Tick, editCommentCmd(m.client, m.editingCommentID, content)))
+			} else if m.state == stateComment {
+				m.loading = true
+				m.loadingMsg = "Adding comment..."
+				cmds = append(cmds, tea.Batch(m.spinner.Tick, addCommentCmd(m.client, m.selectedTask.ID, content)))
 			}
 		}
 		m.state = stateTaskDetail
 		m.updateViewportContent()
-		return m, nil
+		return m, tea.Batch(cmds...)
 	case commentAddedMsg:
 		m.popupMsg = "Comment added!"
 		return m, tea.Batch(
@@ -611,7 +628,14 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} }),
 		)
 	case commentsMsg:
-		m.selectedComments = msg
+		m.loading = false
+		// Sort comments oldest to newest (API returns newest first)
+		comments := []clickup.Comment(msg)
+		for i, j := 0, len(comments)-1; i < j; i, j = i+1, j-1 {
+			comments[i], comments[j] = comments[j], comments[i]
+		}
+		m.selectedComments = comments
+
 		m.updateViewportContent()
 		return m, nil
 	case errMsg:
@@ -1049,18 +1073,20 @@ func (m *AppModel) updateDetail(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *AppModel) updateComment(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		switch msg.Type {
-		case tea.KeyEnter:
+		switch msg.String() {
+		case "ctrl+s":
 			v := m.commentInput.Value()
 			if v != "" {
 				m.commentInput.SetValue("")
 				m.commentInput.Blur()
-				m.state = stateTaskDetail
-				m.popupMsg = "Adding comment..."
-				return m, addCommentCmd(m.client, m.selectedTask.ID, v)
+				m.loading = true
+				m.loadingMsg = "Adding comment..."
+				return m, tea.Batch(m.spinner.Tick, addCommentCmd(m.client, m.selectedTask.ID, v))
 			}
 			return m, nil
-		case tea.KeyEsc:
+		case "ctrl+e":
+			return m, openExternalEditorCmd(m.commentInput.Value())
+		case "esc":
 			m.commentInput.SetValue("")
 			m.commentInput.Blur()
 			m.state = stateTaskDetail
@@ -1076,8 +1102,8 @@ func (m *AppModel) updateComment(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *AppModel) updateEditComment(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		switch msg.Type {
-		case tea.KeyEnter:
+		switch msg.String() {
+		case "ctrl+s":
 			v := m.commentInput.Value()
 			if v != "" {
 				m.commentInput.SetValue("")
@@ -1087,7 +1113,9 @@ func (m *AppModel) updateEditComment(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Batch(m.spinner.Tick, editCommentCmd(m.client, m.editingCommentID, v))
 			}
 			return m, nil
-		case tea.KeyEsc:
+		case "ctrl+e":
+			return m, openExternalEditorCmd(m.commentInput.Value())
+		case "esc":
 			m.commentInput.SetValue("")
 			m.commentInput.Blur()
 			m.state = stateTaskDetail
@@ -1714,7 +1742,7 @@ func (m *AppModel) View() string {
 	case stateHelp:
 		mainContent = m.vp.View()
 	case stateComment:
-		mainContent = m.vp.View() + "\n\n" + m.commentInput.View() + "\n(Enter to submit, Esc to cancel)"
+		mainContent = m.vp.View() + "\n\n" + TitleStyle.Render("Adding Comment:") + "\n" + m.commentInput.View() + "\n(Ctrl+S to submit, Ctrl+E for Vim, Esc to cancel)"
 	case stateCreateTask:
 		mainContent = m.activeList.View() + "\n\n" + lipgloss.NewStyle().Bold(true).Render("New Task: ") + m.taskInput.View() + "\n" + lipgloss.NewStyle().Foreground(ColorSubtext).Render("Enter to create | Esc to cancel")
 	case stateCreateSubtask:
@@ -1739,7 +1767,7 @@ func (m *AppModel) View() string {
 		hint := lipgloss.NewStyle().Foreground(ColorSubtext).Render("Ctrl+S to save | Esc to cancel")
 		mainContent = header + "\n\n" + m.descInput.View() + "\n" + hint
 	case stateEditComment:
-		mainContent = m.vp.View() + "\n\n" + TitleStyle.Render("Editing Comment:") + "\n" + m.commentInput.View() + "\n(Enter to save, Esc to cancel)"
+		mainContent = m.vp.View() + "\n\n" + TitleStyle.Render("Editing Comment:") + "\n" + m.commentInput.View() + "\n(Ctrl+S to save, Ctrl+E for Vim, Esc to cancel)"
 	case stateCommand:
 		if m.prevState == stateTaskDetail || m.prevState == stateHelp {
 			mainContent = m.vp.View()
