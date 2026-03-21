@@ -388,10 +388,6 @@ func InitialModel() *AppModel {
 		if err == nil {
 			currentUser = u.Username
 			currentUserID = u.ID
-			if cfg.ClickupUserName == "" {
-				cfg.ClickupUserName = u.Username
-				config.SaveConfig(cfg)
-			}
 		}
 	}
 
