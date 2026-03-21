@@ -38,4 +38,5 @@ var (
 	
 	SectionHeaderStyle = lipgloss.NewStyle().Foreground(ColorPrimary).Bold(true)
 	LabelStyle         = lipgloss.NewStyle().Foreground(ColorSubtext)
+	BreadcrumbStyle    = lipgloss.NewStyle().Foreground(ColorSubtext).Bold(true)
 )

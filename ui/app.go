@@ -2907,6 +2907,147 @@ func (m *AppModel) renderHeader() string {
 	return lipgloss.JoinVertical(lipgloss.Left, banner, headerInfo)
 }
 
+func (m *AppModel) selectedTeamName() string {
+	for _, t := range m.allTeams {
+		if t.ID == m.selectedTeam {
+			return t.Name
+		}
+	}
+	return ""
+}
+
+func (m *AppModel) selectedSpaceName() string {
+	for _, s := range m.allSpaces {
+		if s.ID == m.selectedSpace {
+			return s.Name
+		}
+	}
+	return ""
+}
+
+func (m *AppModel) selectedListName() string {
+	if m.selectedFolder != nil {
+		for _, l := range m.selectedFolder.Lists {
+			if l.ID == m.selectedList {
+				return l.Name
+			}
+		}
+	}
+	for _, l := range m.allLists {
+		if l.ID == m.selectedList {
+			return l.Name
+		}
+	}
+	for _, f := range m.allFolders {
+		for _, l := range f.Lists {
+			if l.ID == m.selectedList {
+				return l.Name
+			}
+		}
+	}
+	return ""
+}
+
+func (m *AppModel) breadcrumb() string {
+	var parts []string
+
+	switch m.state {
+	case stateTeams:
+		parts = append(parts, "Workspaces")
+	case stateSpaces:
+		parts = append(parts, "Workspaces")
+		if name := m.selectedTeamName(); name != "" {
+			parts = append(parts, "Workspace: "+name)
+		}
+		parts = append(parts, "Spaces")
+	case stateLists:
+		parts = append(parts, "Workspaces")
+		if name := m.selectedTeamName(); name != "" {
+			parts = append(parts, "Workspace: "+name)
+		}
+		if name := m.selectedSpaceName(); name != "" {
+			parts = append(parts, "Space: "+name)
+		}
+		if m.selectedFolder != nil && m.selectedFolder.Name != "" {
+			parts = append(parts, "Folder: "+m.selectedFolder.Name)
+		} else {
+			parts = append(parts, "Lists")
+		}
+	case stateTasks, stateSearchResults, stateTaskDetail, stateComment, stateEditDesc, stateCreateSubtask, stateEditComment:
+		parts = append(parts, "Workspaces")
+		if name := m.selectedTeamName(); name != "" {
+			parts = append(parts, "Workspace: "+name)
+		}
+		if name := m.selectedSpaceName(); name != "" {
+			parts = append(parts, "Space: "+name)
+		}
+		if m.selectedFolder != nil && m.selectedFolder.Name != "" {
+			parts = append(parts, "Folder: "+m.selectedFolder.Name)
+		}
+		if name := m.selectedListName(); name != "" {
+			parts = append(parts, "List: "+name)
+		}
+		if m.state == stateTasks {
+			parts = append(parts, "Tasks")
+		}
+		if m.state == stateSearchResults {
+			label := "Search"
+			if q := strings.TrimSpace(m.searchQuery); q != "" {
+				label = fmt.Sprintf("Search: %q", q)
+			}
+			parts = append(parts, label)
+		}
+		if m.state == stateTaskDetail || m.state == stateComment || m.state == stateEditDesc || m.state == stateCreateSubtask || m.state == stateEditComment {
+			if m.selectedTask.Name != "" {
+				taskID := m.selectedTask.ID
+				if m.selectedTask.CustomID != "" {
+					taskID = m.selectedTask.CustomID
+				}
+				parts = append(parts, fmt.Sprintf("Task: [%s] %s", taskID, m.selectedTask.Name))
+			}
+		}
+	case stateHelp:
+		parts = append(parts, "Help")
+	case stateCreateTask:
+		parts = append(parts, "Workspaces")
+		if name := m.selectedTeamName(); name != "" {
+			parts = append(parts, "Workspace: "+name)
+		}
+		if name := m.selectedSpaceName(); name != "" {
+			parts = append(parts, "Space: "+name)
+		}
+		if m.selectedFolder != nil && m.selectedFolder.Name != "" {
+			parts = append(parts, "Folder: "+m.selectedFolder.Name)
+		}
+		if name := m.selectedListName(); name != "" {
+			parts = append(parts, "List: "+name)
+		}
+		parts = append(parts, "New Task")
+	case stateMovePicker:
+		parts = append(parts, "Workspaces")
+		if name := m.selectedTeamName(); name != "" {
+			parts = append(parts, "Workspace: "+name)
+		}
+		if name := m.selectedSpaceName(); name != "" {
+			parts = append(parts, "Space: "+name)
+		}
+		if name := m.selectedListName(); name != "" {
+			parts = append(parts, "List: "+name)
+		}
+		parts = append(parts, "Move Ticket")
+	case stateCommand:
+		return ""
+	case stateConfirmProfileDelete:
+		parts = append(parts, "Profiles", "Delete Profile")
+	}
+
+	if len(parts) == 0 {
+		return ""
+	}
+
+	return BreadcrumbStyle.Render(strings.Join(parts, "  >  "))
+}
+
 func (m *AppModel) View() string {
 	if m.width == 0 {
 		return "Starting..."
@@ -3026,6 +3167,10 @@ func (m *AppModel) View() string {
 	bottomBar := m.cmdInput.View() + sb.String()
 	if m.state != stateCommand {
 		bottomBar = lipgloss.NewStyle().Foreground(ColorSubtext).Render("Type / to enter command")
+	}
+
+	if breadcrumb := m.breadcrumb(); breadcrumb != "" {
+		mainContent = breadcrumb + "\n\n" + mainContent
 	}
 
 	if m.popupMsg != "" {
