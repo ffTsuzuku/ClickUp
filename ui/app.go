@@ -1555,6 +1555,10 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 								m.commentInput.Focus()
 								return m, textinput.Blink
 							} else if action == "reply" {
+								if comment.Parent != nil && *comment.Parent != "" {
+									m.popupMsg = "Error: Cannot reply to a reply"
+									return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+								}
 								m.replyToCommentID = comment.ID
 								m.replyToUser = comment.User.Username
 								m.state = stateComment
@@ -1999,12 +2003,19 @@ func (m *AppModel) View() string {
 	}
 
 	if m.popupMsg != "" {
+		icon := "✓ "
+		color := ColorSecondary
+		if strings.HasPrefix(m.popupMsg, "Error") {
+			icon = "✖ "
+			color = ColorError
+		}
+
 		popupBox := lipgloss.NewStyle().
 			Background(lipgloss.Color("236")).
-			Foreground(ColorSecondary).
+			Foreground(color).
 			Bold(true).
 			Padding(0, 1).
-			Render("✓ " + m.popupMsg)
+			Render(icon + m.popupMsg)
 			
 		shadow := lipgloss.NewStyle().Foreground(lipgloss.Color("234")).Render("▌")
 		popupStr := popupBox + shadow

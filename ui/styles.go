@@ -9,6 +9,7 @@ var (
 	ColorText      = lipgloss.Color("#e1e4e8")
 	ColorSubtext   = lipgloss.Color("#6e7681")
 	ColorBorder    = lipgloss.Color("#30363d")
+	ColorError     = lipgloss.Color("#FF4D4D")
 
 	// Styles
 	BaseStyle = lipgloss.NewStyle().
