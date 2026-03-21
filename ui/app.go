@@ -41,6 +41,7 @@ const (
 	stateCreateSubtask
 	stateEditComment
 	stateConfirmProfileDelete
+	stateConfirmListDelete
 )
 
 // Item Wrappers
@@ -137,6 +138,69 @@ func formatClickUpTimestamp(ts string) string {
 	}
 
 	return time.UnixMilli(ms).Local().Format("Jan 2, 2006 3:04 PM")
+}
+
+func (m *AppModel) stateLabel() string {
+	switch m.state {
+	case stateTeams:
+		return "Workspaces"
+	case stateSpaces:
+		return "Spaces"
+	case stateLists:
+		return "Lists"
+	case stateTasks:
+		return "Tasks"
+	case stateSearchResults:
+		return "Search Results"
+	case stateTaskDetail:
+		return "Task Detail"
+	case stateComment:
+		return "New Comment"
+	case stateCommand:
+		return "Command Prompt"
+	case stateHelp:
+		return "Help"
+	case stateCreateTask:
+		return "Create Task"
+	case stateMovePicker:
+		return "Move Picker"
+	case stateEditDesc:
+		return "Edit Description"
+	case stateCreateSubtask:
+		return "Create Subtask"
+	case stateEditComment:
+		return "Edit Comment"
+	case stateConfirmProfileDelete:
+		return "Confirm Profile Delete"
+	case stateConfirmListDelete:
+		return "Confirm List Delete"
+	default:
+		return "Unknown"
+	}
+}
+
+func (m *AppModel) recordError(context string, err error) {
+	if err == nil {
+		return
+	}
+
+	taskID := m.selectedTask.ID
+	if m.selectedTask.CustomID != "" {
+		taskID = m.selectedTask.CustomID
+	}
+
+	_ = config.AppendErrorLog(config.ErrorLogEntry{
+		Time:      time.Now(),
+		Context:   context,
+		Message:   err.Error(),
+		Profile:   m.activeProfile,
+		State:     m.stateLabel(),
+		Workspace: m.selectedTeamName(),
+		Space:     m.selectedSpaceName(),
+		List:      m.selectedListName(),
+		TaskID:    taskID,
+		TaskName:  m.selectedTask.Name,
+	})
 }
 
 type Suggestion struct {
@@ -432,6 +496,9 @@ type AppModel struct {
 	replyToCommentID string
 	replyToUser      string
 	pendingDeleteProfile string
+	pendingDeleteListID string
+	pendingDeleteListName string
+	pendingDeleteListFolderID string
 	externalEditTarget string
 	currentUser      string
 	currentUserID    int
@@ -479,6 +546,17 @@ type spaceCreatedMsg struct {
 }
 type listCreatedMsg struct {
 	Hierarchy *clickup.SpaceHierarchy
+	Name      string
+}
+type listRenamedMsg struct {
+	Hierarchy *clickup.SpaceHierarchy
+	ListID    string
+	FolderID  string
+	Name      string
+}
+type listDeletedMsg struct {
+	Hierarchy *clickup.SpaceHierarchy
+	FolderID  string
 	Name      string
 }
 type statusUpdatedMsg struct {
@@ -622,6 +700,32 @@ func createListCmd(c *clickup.Client, spaceID, folderID, name string) tea.Cmd {
 			return errMsg(err)
 		}
 		return listCreatedMsg{Hierarchy: hierarchy, Name: name}
+	}
+}
+
+func renameListCmd(c *clickup.Client, spaceID, listID, folderID, name string) tea.Cmd {
+	return func() tea.Msg {
+		if _, err := c.UpdateList(listID, name); err != nil {
+			return errMsg(err)
+		}
+		hierarchy, err := c.GetSpaceLists(spaceID)
+		if err != nil {
+			return errMsg(err)
+		}
+		return listRenamedMsg{Hierarchy: hierarchy, ListID: listID, FolderID: folderID, Name: name}
+	}
+}
+
+func deleteListCmd(c *clickup.Client, spaceID, listID, folderID, name string) tea.Cmd {
+	return func() tea.Msg {
+		if err := c.DeleteList(listID); err != nil {
+			return errMsg(err)
+		}
+		hierarchy, err := c.GetSpaceLists(spaceID)
+		if err != nil {
+			return errMsg(err)
+		}
+		return listDeletedMsg{Hierarchy: hierarchy, FolderID: folderID, Name: name}
 	}
 }
 
@@ -1218,6 +1322,74 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.activeList = &m.listsList
 		m.popupMsg = "Created list " + msg.Name
 		return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+	case listRenamedMsg:
+		m.loading = false
+		m.allFolders = msg.Hierarchy.Folders
+		m.allLists = msg.Hierarchy.Lists
+		m.selectedFolder = nil
+
+		var items []list.Item
+		if msg.FolderID != "" {
+			for _, f := range m.allFolders {
+				if f.ID == msg.FolderID {
+					folder := f
+					m.selectedFolder = &folder
+					for _, l := range f.Lists {
+						items = append(items, listItem(l))
+					}
+					break
+				}
+			}
+		}
+		if len(items) == 0 {
+			for _, f := range m.allFolders {
+				items = append(items, folderItem(f))
+			}
+			for _, l := range m.allLists {
+				items = append(items, listItem(l))
+			}
+		}
+		m.listsList.SetItems(items)
+		m.state = stateLists
+		m.activeList = &m.listsList
+		m.popupMsg = "Renamed list to " + msg.Name
+		return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+	case listDeletedMsg:
+		m.loading = false
+		m.allFolders = msg.Hierarchy.Folders
+		m.allLists = msg.Hierarchy.Lists
+		m.selectedFolder = nil
+		m.selectedList = ""
+		m.pendingDeleteListID = ""
+		m.pendingDeleteListName = ""
+		m.pendingDeleteListFolderID = ""
+
+		var items []list.Item
+		if msg.FolderID != "" {
+			for _, f := range m.allFolders {
+				if f.ID == msg.FolderID {
+					folder := f
+					m.selectedFolder = &folder
+					for _, l := range f.Lists {
+						items = append(items, listItem(l))
+					}
+					break
+				}
+			}
+		}
+		if len(items) == 0 {
+			for _, f := range m.allFolders {
+				items = append(items, folderItem(f))
+			}
+			for _, l := range m.allLists {
+				items = append(items, listItem(l))
+			}
+		}
+		m.listsList.SetItems(items)
+		m.state = stateLists
+		m.activeList = &m.listsList
+		m.popupMsg = "Deleted list " + msg.Name
+		return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
 	case statusUpdatedMsg:
 		m.loading = false
 		m.selectedTask = *msg.Task
@@ -1272,6 +1444,7 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case errMsg:
 		m.loading = false
 		m.err = msg
+		m.recordError("application error", msg)
 		m.popupMsg = "Error: " + msg.Error()
 		return m, tea.Tick(time.Second*3, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
 	case clearPopupMsg:
@@ -1291,6 +1464,7 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, loadProfileUserCmd(base, msg.Popup)
 	case profileReloadUserMsg:
 		if msg.Err != nil {
+			msg.Model.recordError("profile reload: authenticating profile", msg.Err)
 			msg.Model.popupMsg = popupWithErr(msg.Popup, "authenticating profile", msg.Err)
 			*m = *msg.Model
 			return m, tea.Tick(time.Second*3, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
@@ -1299,6 +1473,7 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, loadProfileTeamsCmd(msg.Model, msg.Popup)
 	case profileReloadTeamsMsg:
 		if msg.Err != nil {
+			msg.Model.recordError("profile reload: loading workspaces", msg.Err)
 			msg.Model.popupMsg = popupWithErr(msg.Popup, "loading workspaces", msg.Err)
 			*m = *msg.Model
 			return m, tea.Tick(time.Second*3, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
@@ -1341,6 +1516,8 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateEditComment(msg)
 	case stateConfirmProfileDelete:
 		return m.updateConfirmProfileDelete(msg)
+	case stateConfirmListDelete:
+		return m.updateConfirmListDelete(msg)
 	}
 
 	return m, tea.Batch(cmds...)
@@ -1467,6 +1644,8 @@ func (m *AppModel) updateCommandSuggestions() {
 	sugs = append(sugs, Suggestion{"/search ", "Search tickets across the workspace"})
 	sugs = append(sugs, Suggestion{"/space create ", "Create a new Space in the current Workspace"})
 	sugs = append(sugs, Suggestion{"/list create ", "Create a new List in the current Folder or Space"})
+	sugs = append(sugs, Suggestion{"/list rename ", "Rename the highlighted List"})
+	sugs = append(sugs, Suggestion{"/list delete", "Delete the highlighted List"})
 	sugs = append(sugs, Suggestion{"/profile list", "List available ClickUp profiles"})
 	sugs = append(sugs, Suggestion{"/profile create ", "Create a new empty profile and switch to it"})
 	sugs = append(sugs, Suggestion{"/profile switch ", "Switch to another profile"})
@@ -1563,6 +1742,8 @@ func (m *AppModel) updateCommandSuggestions() {
 		}
 	} else if m.prevState == stateLists {
 		sugs = append(sugs, Suggestion{"/filter", "Filter lists by name"})
+		sugs = append(sugs, Suggestion{"/list rename ", "Rename the highlighted List"})
+		sugs = append(sugs, Suggestion{"/list delete", "Delete the highlighted List"})
 		for _, t := range m.allLists {
 			sugs = append(sugs, Suggestion{"/filter " + strings.ToLower(t.Name), "Find list " + t.Name})
 		}
@@ -2173,6 +2354,37 @@ func (m *AppModel) updateConfirmProfileDelete(msg tea.Msg) (tea.Model, tea.Cmd) 
 	return m, nil
 }
 
+func (m *AppModel) updateConfirmListDelete(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch strings.ToLower(msg.String()) {
+		case "y", "enter":
+			listID := m.pendingDeleteListID
+			listName := m.pendingDeleteListName
+			folderID := m.pendingDeleteListFolderID
+			m.pendingDeleteListID = ""
+			m.pendingDeleteListName = ""
+			m.pendingDeleteListFolderID = ""
+			if m.selectedSpace == "" {
+				m.state = m.prevState
+				m.popupMsg = "Error: select a Space first"
+				return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+			}
+			m.loading = true
+			m.loadingMsg = "Deleting list..."
+			return m, tea.Batch(m.spinner.Tick, deleteListCmd(m.client, m.selectedSpace, listID, folderID, listName))
+		case "n", "esc", "q":
+			m.pendingDeleteListID = ""
+			m.pendingDeleteListName = ""
+			m.pendingDeleteListFolderID = ""
+			m.state = m.prevState
+			m.popupMsg = "List deletion cancelled"
+			return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+		}
+	}
+	return m, nil
+}
+
 func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
@@ -2274,6 +2486,50 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.loadingMsg = "Creating list in space..."
 				}
 				return m, tea.Batch(m.spinner.Tick, createListCmd(m.client, m.selectedSpace, folderID, name))
+			} else if strings.HasPrefix(val, "/list rename ") {
+				if m.prevState != stateLists {
+					m.popupMsg = "Error: /list rename only works from the list view"
+					return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+				}
+				name := strings.TrimSpace(strings.TrimPrefix(val, "/list rename "))
+				if name == "" {
+					m.popupMsg = "Error: new list name required"
+					return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+				}
+				selected, ok := m.activeList.SelectedItem().(listItem)
+				if !ok {
+					m.popupMsg = "Error: highlight a list first"
+					return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+				}
+				if m.selectedSpace == "" {
+					m.popupMsg = "Error: select a Space first"
+					return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+				}
+				folderID := ""
+				if m.selectedFolder != nil {
+					folderID = m.selectedFolder.ID
+				}
+				m.loading = true
+				m.loadingMsg = "Renaming list..."
+				return m, tea.Batch(m.spinner.Tick, renameListCmd(m.client, m.selectedSpace, selected.ID, folderID, name))
+			} else if strings.HasPrefix(val, "/list delete") {
+				if m.prevState != stateLists {
+					m.popupMsg = "Error: /list delete only works from the list view"
+					return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+				}
+				selected, ok := m.activeList.SelectedItem().(listItem)
+				if !ok {
+					m.popupMsg = "Error: highlight a list first"
+					return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+				}
+				m.pendingDeleteListID = selected.ID
+				m.pendingDeleteListName = selected.Name
+				m.pendingDeleteListFolderID = ""
+				if m.selectedFolder != nil {
+					m.pendingDeleteListFolderID = m.selectedFolder.ID
+				}
+				m.state = stateConfirmListDelete
+				return m, nil
 			} else if strings.HasPrefix(val, "/profile list") {
 				names := m.cfg.ProfileNames()
 				for i, name := range names {
@@ -2899,6 +3155,8 @@ func (m *AppModel) updateHelpContent() {
 	b.WriteString("• /search status:<status> assignee:<name> <text> : Search with filters\n")
 	b.WriteString("• /space create <name>     : Create a new Space in the current Workspace\n")
 	b.WriteString("• /list create <name>      : Create a new List in the current Folder or Space\n")
+	b.WriteString("• /list rename <name>      : Rename the highlighted List in the list view\n")
+	b.WriteString("• /list delete             : Delete the highlighted List after confirmation\n")
 	b.WriteString("• /profile list            : Show available profiles\n")
 	b.WriteString("• /profile create <name>   : Create a new empty profile and switch to it\n")
 	b.WriteString("• /profile switch <name>   : Switch to a saved profile\n")
@@ -3117,6 +3375,8 @@ func (m *AppModel) breadcrumb() string {
 		return ""
 	case stateConfirmProfileDelete:
 		parts = append(parts, "Profiles", "Delete Profile")
+	case stateConfirmListDelete:
+		parts = append(parts, "Lists", "Delete List")
 	}
 
 	if len(parts) == 0 {
@@ -3208,6 +3468,17 @@ func (m *AppModel) View() string {
 			Render(
 				TitleStyle.Render("Delete Profile?") + "\n\n" +
 					fmt.Sprintf("Delete profile %q?", m.pendingDeleteProfile) + "\n\n" +
+					lipgloss.NewStyle().Foreground(ColorSubtext).Render("y/enter: yes • n/esc: no"),
+			)
+		mainContent = lipgloss.Place(m.width, m.height-8, lipgloss.Center, lipgloss.Center, box)
+	case stateConfirmListDelete:
+		box := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(ColorBorder).
+			Padding(1, 2).
+			Render(
+				TitleStyle.Render("Delete List?") + "\n\n" +
+					fmt.Sprintf("Delete list %q?", m.pendingDeleteListName) + "\n\n" +
 					lipgloss.NewStyle().Foreground(ColorSubtext).Render("y/enter: yes • n/esc: no"),
 			)
 		mainContent = lipgloss.Place(m.width, m.height-8, lipgloss.Center, lipgloss.Center, box)

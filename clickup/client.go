@@ -202,6 +202,28 @@ func (c *Client) CreateFolderlessList(spaceID, name string) (*List, error) {
 	return &list, nil
 }
 
+func (c *Client) UpdateList(listID, name string) (*List, error) {
+	endpoint := fmt.Sprintf("/list/%s", listID)
+	reqBody := map[string]interface{}{"name": name}
+	body, _ := json.Marshal(reqBody)
+	data, err := c.doReq("PUT", endpoint, body)
+	if err != nil {
+		return nil, err
+	}
+
+	var list List
+	if err := json.Unmarshal(data, &list); err != nil {
+		return nil, err
+	}
+	return &list, nil
+}
+
+func (c *Client) DeleteList(listID string) error {
+	endpoint := fmt.Sprintf("/list/%s", listID)
+	_, err := c.doReq("DELETE", endpoint, nil)
+	return err
+}
+
 // Tasks --------------------------
 
 type TaskStatus struct {
