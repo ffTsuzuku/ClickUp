@@ -36,6 +36,7 @@ const (
 	stateMovePicker
 	stateEditDesc
 	stateCreateSubtask
+	stateEditComment
 )
 
 // Item Wrappers
@@ -142,6 +143,7 @@ type AppModel struct {
 	popupMsg   string
 	
 	selectedComments []clickup.Comment
+	editingCommentID string
 	currentUser      string
 	currentUserID    int
 	err error
@@ -254,6 +256,24 @@ func fetchCommentsCmd(c *clickup.Client, taskID string) tea.Cmd {
 		comments, err := c.GetTaskComments(taskID)
 		if err != nil { return errMsg(err) }
 		return commentsMsg(comments)
+	}
+}
+
+func editCommentCmd(c *clickup.Client, commentID, text string) tea.Cmd {
+	return func() tea.Msg {
+		if err := c.UpdateComment(commentID, text); err != nil {
+			return errMsg(err)
+		}
+		return commentAddedMsg{}
+	}
+}
+
+func deleteCommentCmd(c *clickup.Client, commentID string) tea.Cmd {
+	return func() tea.Msg {
+		if err := c.DeleteComment(commentID); err != nil {
+			return errMsg(err)
+		}
+		return commentAddedMsg{}
 	}
 }
 
@@ -628,6 +648,8 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateEditDesc(msg)
 	case stateCreateSubtask:
 		return m.updateCreateSubtask(msg)
+	case stateEditComment:
+		return m.updateEditComment(msg)
 	}
 
 	return m, tea.Batch(cmds...)
@@ -712,6 +734,8 @@ func (m *AppModel) updateCommandSuggestions() {
 		sugs = append(sugs, Suggestion{"/desc", "Edit the ticket description (inline)"})
 		sugs = append(sugs, Suggestion{"/editext", "Edit description in $EDITOR (vim etc)"})
 		sugs = append(sugs, Suggestion{"/subtask", "Add a subtask to this ticket"})
+		sugs = append(sugs, Suggestion{"/comment edit ", "Edit a comment by its number (e.g. /comment edit 1)"})
+		sugs = append(sugs, Suggestion{"/comment delete ", "Delete a comment by its number (e.g. /comment delete 1)"})
 
 		// Suggest all known workspace members
 		for _, member := range m.teamMembers {
@@ -1049,6 +1073,32 @@ func (m *AppModel) updateComment(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+func (m *AppModel) updateEditComment(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.Type {
+		case tea.KeyEnter:
+			v := m.commentInput.Value()
+			if v != "" {
+				m.commentInput.SetValue("")
+				m.commentInput.Blur()
+				m.state = stateTaskDetail
+				m.popupMsg = "Updating comment..."
+				return m, tea.Batch(m.spinner.Tick, editCommentCmd(m.client, m.editingCommentID, v))
+			}
+			return m, nil
+		case tea.KeyEsc:
+			m.commentInput.SetValue("")
+			m.commentInput.Blur()
+			m.state = stateTaskDetail
+			return m, nil
+		}
+	}
+	var cmd tea.Cmd
+	m.commentInput, cmd = m.commentInput.Update(msg)
+	return m, cmd
+}
+
 func (m *AppModel) updateCreateTask(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
@@ -1323,6 +1373,29 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.taskInput.Focus()
 					return m, textinput.Blink
 				}
+			} else if strings.HasPrefix(val, "/comment ") {
+				if m.prevState == stateTaskDetail {
+					parts := strings.Fields(val)
+					if len(parts) >= 3 {
+						idx, err := strconv.Atoi(parts[2])
+						if err == nil && idx > 0 && idx <= len(m.selectedComments) {
+							comment := m.selectedComments[idx-1]
+							action := strings.ToLower(parts[1])
+							if action == "delete" || action == "del" {
+								m.loading = true
+								m.loadingMsg = "Deleting comment..."
+								m.state = stateTaskDetail
+								return m, tea.Batch(m.spinner.Tick, deleteCommentCmd(m.client, comment.ID))
+							} else if action == "edit" {
+								m.state = stateEditComment
+								m.editingCommentID = comment.ID
+								m.commentInput.SetValue(comment.CommentText)
+								m.commentInput.Focus()
+								return m, textinput.Blink
+							}
+						}
+					}
+				}
 			} else if strings.HasPrefix(val, "/assign ") {
 				if m.prevState == stateTaskDetail {
 					// Kick off background member fetch if not already done
@@ -1514,9 +1587,9 @@ func (m *AppModel) updateViewportContent() {
 	b.WriteString(divider + "\n\n")
 	b.WriteString(SectionHeaderStyle.Render("COMMENTS") + "\n")
 	if len(m.selectedComments) > 0 {
-		for _, c := range m.selectedComments {
+		for i, c := range m.selectedComments {
 			author := lipgloss.NewStyle().Foreground(ColorSecondary).Bold(true).Render(c.User.Username)
-			b.WriteString(fmt.Sprintf("%s: %s\n", author, c.CommentText))
+			b.WriteString(fmt.Sprintf("%d. %s: %s\n", i+1, author, c.CommentText))
 		}
 	} else {
 		b.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext).Render("No comments."))
@@ -1665,6 +1738,8 @@ func (m *AppModel) View() string {
 		header := TitleStyle.Render(fmt.Sprintf("Editing: %s", m.selectedTask.Name))
 		hint := lipgloss.NewStyle().Foreground(ColorSubtext).Render("Ctrl+S to save | Esc to cancel")
 		mainContent = header + "\n\n" + m.descInput.View() + "\n" + hint
+	case stateEditComment:
+		mainContent = m.vp.View() + "\n\n" + TitleStyle.Render("Editing Comment:") + "\n" + m.commentInput.View() + "\n(Enter to save, Esc to cancel)"
 	case stateCommand:
 		if m.prevState == stateTaskDetail || m.prevState == stateHelp {
 			mainContent = m.vp.View()

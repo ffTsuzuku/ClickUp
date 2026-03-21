@@ -389,3 +389,19 @@ func (c *Client) GetTaskComments(taskID string) ([]Comment, error) {
 	}
 	return result.Comments, nil
 }
+
+// UpdateComment updates an existing comment
+func (c *Client) UpdateComment(commentID, commentText string) error {
+	endpoint := fmt.Sprintf("/comment/%s", commentID)
+	reqBody := map[string]interface{}{"comment_text": commentText}
+	body, _ := json.Marshal(reqBody)
+	_, err := c.doReq("PUT", endpoint, body)
+	return err
+}
+
+// DeleteComment deletes a comment
+func (c *Client) DeleteComment(commentID string) error {
+	endpoint := fmt.Sprintf("/comment/%s", commentID)
+	_, err := c.doReq("DELETE", endpoint, nil)
+	return err
+}
