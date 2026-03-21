@@ -432,6 +432,7 @@ type AppModel struct {
 	replyToCommentID string
 	replyToUser      string
 	pendingDeleteProfile string
+	externalEditTarget string
 	currentUser      string
 	currentUserID    int
 	activeProfile    string
@@ -479,6 +480,11 @@ type spaceCreatedMsg struct {
 type listCreatedMsg struct {
 	Hierarchy *clickup.SpaceHierarchy
 	Name      string
+}
+type statusUpdatedMsg struct {
+	Task     *clickup.Task
+	Tasks    []clickup.Task
+	Comments []clickup.Comment
 }
 type teamMembersMsg []clickup.Member
 type commentAddedMsg struct{}
@@ -616,6 +622,31 @@ func createListCmd(c *clickup.Client, spaceID, folderID, name string) tea.Cmd {
 			return errMsg(err)
 		}
 		return listCreatedMsg{Hierarchy: hierarchy, Name: name}
+	}
+}
+
+func updateStatusCmd(c *clickup.Client, taskID, teamID, listID, status string) tea.Cmd {
+	return func() tea.Msg {
+		if err := c.UpdateStatus(taskID, status); err != nil {
+			return errMsg(fmt.Errorf("updating status: %w", err))
+		}
+
+		task, err := c.GetTask(taskID, teamID)
+		if err != nil {
+			return errMsg(fmt.Errorf("reloading task after status update: %w", err))
+		}
+
+		tasks, err := c.GetTasks(listID)
+		if err != nil {
+			return errMsg(fmt.Errorf("reloading list after status update: %w", err))
+		}
+
+		comments, err := fetchCommentsRecursive(taskID, c)
+		if err != nil {
+			return errMsg(fmt.Errorf("reloading comments after status update: %w", err))
+		}
+
+		return statusUpdatedMsg{Task: task, Tasks: tasks, Comments: comments}
 	}
 }
 
@@ -1033,7 +1064,14 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		s := msg.String()
-		if (s == "/" || s == ":") && m.state != stateCommand && m.state != stateComment {
+		isEditingState := m.state == stateCommand ||
+			m.state == stateComment ||
+			m.state == stateEditDesc ||
+			m.state == stateCreateTask ||
+			m.state == stateCreateSubtask ||
+			m.state == stateEditComment
+
+		if (s == "/" || s == ":") && !isEditingState {
 			m.prevState = m.state
 			m.state = stateCommand
 			m.cmdInput.Focus()
@@ -1041,10 +1079,6 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cmdInput.SetCursor(len(m.cmdInput.Value()))
 			m.updateCommandSuggestions()
 			m.updateLayout()
-			// Lazily fetch team members for /assign suggestions
-			if m.state == stateCommand && m.prevState == stateTaskDetail && len(m.teamMembers) == 0 && m.selectedTeam != "" {
-				return m, tea.Batch(textinput.Blink, fetchTeamMembersCmd(m.client, m.selectedTeam))
-			}
 			return m, textinput.Blink
 		}
 
@@ -1184,10 +1218,19 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.activeList = &m.listsList
 		m.popupMsg = "Created list " + msg.Name
 		return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+	case statusUpdatedMsg:
+		m.loading = false
+		m.selectedTask = *msg.Task
+		m.allTasks = msg.Tasks
+		m.selectedComments = msg.Comments
+		m.updateViewportContent()
+		m.applyHierarchyFilter(strings.TrimPrefix(m.cmdInput.Value(), "/filter "))
+		m.popupMsg = "Updated status to " + m.selectedTask.Status.Status
+		return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
 	case editorFinishedMsg:
 		if msg.err == nil && msg.content != "" {
 			content := strings.TrimRight(msg.content, "\n")
-			if m.state == stateEditDesc {
+			if m.externalEditTarget == "description" || m.state == stateEditDesc {
 				if err := m.client.UpdateDescription(m.selectedTask.ID, content); err == nil {
 					m.selectedTask.Desc = content
 					m.selectedTask.MarkdownDescription = content
@@ -1199,16 +1242,17 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						}
 					}
 				}
-			} else if m.state == stateEditComment {
+			} else if m.externalEditTarget == "comment" || m.state == stateEditComment {
 				m.loading = true
 				m.loadingMsg = "Updating comment..."
 				cmds = append(cmds, tea.Batch(m.spinner.Tick, editCommentCmd(m.client, m.editingCommentID, content)))
-			} else if m.state == stateComment {
+			} else if m.externalEditTarget == "new_comment" || m.state == stateComment {
 				m.loading = true
 				m.loadingMsg = "Adding comment..."
 				cmds = append(cmds, tea.Batch(m.spinner.Tick, addCommentCmd(m.client, m.selectedTask.ID, content, m.replyToCommentID)))
 			}
 		}
+		m.externalEditTarget = ""
 		m.state = stateTaskDetail
 		m.updateViewportContent()
 		return m, tea.Batch(cmds...)
@@ -1228,7 +1272,8 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case errMsg:
 		m.loading = false
 		m.err = msg
-		return m, nil
+		m.popupMsg = "Error: " + msg.Error()
+		return m, tea.Tick(time.Second*3, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
 	case clearPopupMsg:
 		m.popupMsg = ""
 		return m, nil
@@ -1503,11 +1548,7 @@ func (m *AppModel) updateCommandSuggestions() {
 			}
 		}
 
-		statuses := make(map[string]bool)
-		for _, t := range m.allTasks {
-			statuses[strings.ToLower(t.Status.Status)] = true
-		}
-		for s := range statuses {
+		for _, s := range m.availableStatuses() {
 			sugs = append(sugs, Suggestion{"/status " + s, "Set status to " + s})
 		}
 	} else if m.prevState == stateTeams {
@@ -1658,6 +1699,45 @@ func (m *AppModel) applyTaskFilter(query string) {
 
 	m.tasksList.Title = fmt.Sprintf("Tasks (Total Points: %v)", totalPoints)
 	m.tasksList.SetItems(items)
+}
+
+func (m *AppModel) availableStatuses() []string {
+	seen := make(map[string]bool)
+	var statuses []string
+
+	add := func(status string) {
+		status = strings.TrimSpace(status)
+		if status == "" {
+			return
+		}
+		key := strings.ToLower(status)
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		statuses = append(statuses, status)
+	}
+
+	for _, s := range m.allSpaces {
+		if s.ID == m.selectedSpace {
+			for _, st := range s.Statuses {
+				add(st.Status)
+			}
+			break
+		}
+	}
+
+	for _, t := range m.allTasks {
+		add(t.Status.Status)
+	}
+
+	add(m.selectedTask.Status.Status)
+
+	sort.Slice(statuses, func(i, j int) bool {
+		return strings.ToLower(statuses[i]) < strings.ToLower(statuses[j])
+	})
+
+	return statuses
 }
 
 func (m *AppModel) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -1817,6 +1897,7 @@ func (m *AppModel) updateDetail(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, textarea.Blink
 		case "E":
 			// Open in external editor
+			m.externalEditTarget = "description"
 			return m, openExternalEditorCmd(m.editableDescription())
 		case "D":
 			return m, m.copyTaskDescription()
@@ -1880,6 +1961,7 @@ func (m *AppModel) updateComment(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "ctrl+e":
+			m.externalEditTarget = "new_comment"
 			return m, openExternalEditorCmd(m.commentInput.Value())
 		case "esc":
 			m.commentInput.SetValue("")
@@ -1909,6 +1991,7 @@ func (m *AppModel) updateEditComment(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "ctrl+e":
+			m.externalEditTarget = "comment"
 			return m, openExternalEditorCmd(m.commentInput.Value())
 		case "esc":
 			m.commentInput.SetValue("")
@@ -2282,19 +2365,13 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else if strings.HasPrefix(val, "/status ") {
 				if m.prevState == stateTaskDetail {
 					newStatus := strings.TrimPrefix(val, "/status ")
-					m.client.UpdateStatus(m.selectedTask.ID, newStatus)
-					// Update local view
-					m.selectedTask.Status.Status = newStatus
-					m.updateViewportContent()
-					// Update local cache
-					for i, t := range m.allTasks {
-						if t.ID == m.selectedTask.ID {
-							m.allTasks[i].Status.Status = newStatus
-							break
-						}
+					if strings.TrimSpace(newStatus) == "" {
+						m.popupMsg = "Error: status required"
+						return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
 					}
-					// Re-apply filter so lists reflect changes
-					m.applyHierarchyFilter(strings.TrimPrefix(m.cmdInput.Value(), "/filter "))
+					m.loading = true
+					m.loadingMsg = "Updating status..."
+					return m, tea.Batch(m.spinner.Tick, updateStatusCmd(m.client, m.selectedTask.ID, m.selectedTeam, m.selectedList, newStatus))
 				}
 			} else if strings.HasPrefix(val, "/priority ") {
 				if m.prevState == stateTaskDetail {
@@ -2408,6 +2485,7 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			} else if strings.HasPrefix(val, "/editext") {
 				if m.prevState == stateTaskDetail {
+					m.externalEditTarget = "description"
 					return m, openExternalEditorCmd(m.editableDescription())
 				}
 			} else if strings.HasPrefix(val, "/subtask") {

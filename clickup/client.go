@@ -80,8 +80,9 @@ func (c *Client) GetTeams() ([]Team, error) {
 // Spaces -------------------------
 
 type Space struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID       string       `json:"id"`
+	Name     string       `json:"name"`
+	Statuses []TaskStatus `json:"statuses"`
 }
 
 func (c *Client) GetSpaces(teamID string) ([]Space, error) {
@@ -297,7 +298,7 @@ func normalizeTask(task *Task) {
 }
 
 func (c *Client) GetTasks(listID string) ([]Task, error) {
-	endpoint := fmt.Sprintf("/list/%s/task?subtasks=true&include_markdown_description=true", listID)
+	endpoint := fmt.Sprintf("/list/%s/task?subtasks=true&include_closed=true&include_markdown_description=true", listID)
 	data, err := c.doReq("GET", endpoint, nil)
 	if err != nil {
 		return nil, err
