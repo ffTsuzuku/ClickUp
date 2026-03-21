@@ -2294,15 +2294,47 @@ func (m *AppModel) updateViewportContent() {
 	b.WriteString(divider + "\n\n")
 	b.WriteString(SectionHeaderStyle.Render("COMMENTS") + "\n")
 	if len(m.selectedComments) > 0 {
-		for i, c := range m.selectedComments {
-			author := lipgloss.NewStyle().Foreground(ColorSecondary).Bold(true).Render(c.User.Username)
+		commentWidth := m.width - 18
+		if commentWidth < 24 {
+			commentWidth = 24
+		}
 
-			prefix := ""
-			if c.Parent != nil && *c.Parent != "" {
-				prefix = "  ↳ "
+		for i, c := range m.selectedComments {
+			authorName := c.User.Username
+			if authorName == "" {
+				authorName = "Unknown"
 			}
 
-			b.WriteString(fmt.Sprintf("%s%d. %s: %s\n", prefix, i+1, author, c.CommentText))
+			header := lipgloss.JoinHorizontal(
+				lipgloss.Top,
+				lipgloss.NewStyle().Foreground(ColorPrimary).Bold(true).Render(fmt.Sprintf("ID: %d", i+1)),
+				" ",
+				lipgloss.NewStyle().Foreground(ColorSecondary).Bold(true).Render(authorName),
+				" ",
+				lipgloss.NewStyle().Foreground(ColorSubtext).Render(formatClickUpTimestamp(c.Date)),
+			)
+
+			message := strings.TrimSpace(c.CommentText)
+			if message == "" {
+				message = lipgloss.NewStyle().Foreground(ColorSubtext).Italic(true).Render("No comment text.")
+			}
+
+			cardDivider := lipgloss.NewStyle().
+				Foreground(ColorBorder).
+				Render(strings.Repeat("─", max(8, commentWidth-4)))
+
+			commentStyle := lipgloss.NewStyle().
+				Border(lipgloss.NormalBorder()).
+				BorderForeground(ColorBorder).
+				Padding(0, 1).
+				Width(commentWidth)
+
+			if c.Parent != nil && *c.Parent != "" {
+				commentStyle = commentStyle.MarginLeft(2)
+			}
+
+			b.WriteString(commentStyle.Render(header + "\n" + cardDivider + "\n" + message))
+			b.WriteString("\n")
 		}
 	} else {
 		b.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext).Render("No comments."))
