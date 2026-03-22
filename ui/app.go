@@ -516,6 +516,7 @@ type AppModel struct {
 	selectedSpace      string
 	selectedList       string
 	selectedTask       clickup.Task
+	detailBackState    state
 	taskHistory        []clickup.Task
 	searchResults      []clickup.Task
 	searchQuery        string
@@ -814,6 +815,20 @@ func updateStatusCmd(c *clickup.Client, taskID, teamID, listID, status string) t
 		}
 
 		return statusUpdatedMsg{Task: task, Tasks: tasks, Comments: comments}
+	}
+}
+
+func refreshTaskDetailCmd(c *clickup.Client, taskID, teamID string, backState state) tea.Cmd {
+	return func() tea.Msg {
+		task, err := c.GetTask(taskID, teamID)
+		if err != nil {
+			return errMsg(err)
+		}
+		comments, err := fetchCommentsRecursive(taskID, c)
+		if err != nil {
+			return errMsg(err)
+		}
+		return taskDetailMsg{Task: task, Comments: comments, BackState: backState}
 	}
 }
 
@@ -1344,6 +1359,7 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case taskDetailMsg:
 		m.loading = false
 		m.selectedTask = *msg.Task
+		m.detailBackState = msg.BackState
 
 		m.selectedComments = msg.Comments
 
@@ -1832,6 +1848,13 @@ func (m *AppModel) updateCommandSuggestions() {
 		sugs = append(sugs, Suggestion{"/copydesc", "Copy the ticket description to your clipboard"})
 		sugs = append(sugs, Suggestion{"/editext", "Edit description in $EDITOR (vim etc)"})
 		sugs = append(sugs, Suggestion{"/subtask", "Add a subtask to this ticket"})
+		sugs = append(sugs, Suggestion{"/checklist add ", "Create a checklist on this ticket"})
+		sugs = append(sugs, Suggestion{"/checklist rename ", "Rename a checklist by number"})
+		sugs = append(sugs, Suggestion{"/checklist delete ", "Delete a checklist by number"})
+		sugs = append(sugs, Suggestion{"/checklist item add ", "Add an item to a checklist"})
+		sugs = append(sugs, Suggestion{"/checklist item rename ", "Rename a checklist item"})
+		sugs = append(sugs, Suggestion{"/checklist item toggle ", "Toggle a checklist item"})
+		sugs = append(sugs, Suggestion{"/checklist item delete ", "Delete a checklist item"})
 		sugs = append(sugs, Suggestion{"/attach open ", "Open an attachment preview in your browser by number (e.g. /attach open 1)"})
 		sugs = append(sugs, Suggestion{"/attach download ", "Download an attachment by number (e.g. /attach download 1)"})
 		sugs = append(sugs, Suggestion{"/attach share ", "Copy an attachment URL to your clipboard by number (e.g. /attach share 1)"})
@@ -3079,6 +3102,145 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.taskInput.Focus()
 					return m, textinput.Blink
 				}
+			} else if strings.HasPrefix(val, "/checklist ") {
+				if m.prevState == stateTaskDetail {
+					parts := strings.Fields(val)
+					if len(parts) >= 3 {
+						action := strings.ToLower(parts[1])
+						switch action {
+						case "add":
+							name := strings.TrimSpace(strings.TrimPrefix(val, "/checklist add "))
+							if name == "" {
+								m.popupMsg = "Error: checklist name required"
+								return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+							}
+							m.loading = true
+							m.loadingMsg = "Creating checklist..."
+							return m, tea.Batch(m.spinner.Tick, func() tea.Msg {
+								if err := m.client.CreateChecklist(m.selectedTask.ID, name); err != nil {
+									return errMsg(err)
+								}
+								return refreshTaskDetailCmd(m.client, m.selectedTask.ID, m.selectedTeam, m.detailBackState)()
+							})
+						case "rename":
+							if len(parts) < 4 {
+								m.popupMsg = "Error: checklist number and new name required"
+								return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+							}
+							idx, err := strconv.Atoi(parts[2])
+							if err != nil || idx < 1 || idx > len(m.selectedTask.Checklists) {
+								m.popupMsg = "Error: invalid checklist number"
+								return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+							}
+							name := strings.TrimSpace(strings.SplitN(val, parts[2], 2)[1])
+							name = strings.TrimSpace(strings.TrimPrefix(name, parts[2]))
+							if name == "" {
+								name = strings.TrimSpace(strings.TrimPrefix(val, "/checklist rename "+parts[2]))
+							}
+							if name == "" {
+								m.popupMsg = "Error: new checklist name required"
+								return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+							}
+							checklist := m.selectedTask.Checklists[idx-1]
+							m.loading = true
+							m.loadingMsg = "Renaming checklist..."
+							return m, tea.Batch(m.spinner.Tick, func() tea.Msg {
+								if err := m.client.UpdateChecklist(checklist.ID, name); err != nil {
+									return errMsg(err)
+								}
+								return refreshTaskDetailCmd(m.client, m.selectedTask.ID, m.selectedTeam, m.detailBackState)()
+							})
+						case "delete":
+							idx, err := strconv.Atoi(parts[2])
+							if err != nil || idx < 1 || idx > len(m.selectedTask.Checklists) {
+								m.popupMsg = "Error: invalid checklist number"
+								return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+							}
+							checklist := m.selectedTask.Checklists[idx-1]
+							m.loading = true
+							m.loadingMsg = "Deleting checklist..."
+							return m, tea.Batch(m.spinner.Tick, func() tea.Msg {
+								if err := m.client.DeleteChecklist(checklist.ID); err != nil {
+									return errMsg(err)
+								}
+								return refreshTaskDetailCmd(m.client, m.selectedTask.ID, m.selectedTeam, m.detailBackState)()
+							})
+						case "item":
+							if len(parts) < 5 {
+								m.popupMsg = "Error: checklist item command is incomplete"
+								return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+							}
+							itemAction := strings.ToLower(parts[2])
+							checklistIdx, err := strconv.Atoi(parts[3])
+							if err != nil || checklistIdx < 1 || checklistIdx > len(m.selectedTask.Checklists) {
+								m.popupMsg = "Error: invalid checklist number"
+								return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+							}
+							checklist := m.selectedTask.Checklists[checklistIdx-1]
+							switch itemAction {
+							case "add":
+								name := strings.TrimSpace(strings.TrimPrefix(val, "/checklist item add "+parts[3]))
+								if name == "" {
+									m.popupMsg = "Error: checklist item name required"
+									return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+								}
+								m.loading = true
+								m.loadingMsg = "Creating checklist item..."
+								return m, tea.Batch(m.spinner.Tick, func() tea.Msg {
+									if err := m.client.CreateChecklistItem(checklist.ID, name); err != nil {
+										return errMsg(err)
+									}
+									return refreshTaskDetailCmd(m.client, m.selectedTask.ID, m.selectedTeam, m.detailBackState)()
+								})
+							case "rename", "toggle", "delete":
+								if len(parts) < 5 {
+									m.popupMsg = "Error: checklist item number required"
+									return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+								}
+								itemIdx, err := strconv.Atoi(parts[4])
+								if err != nil || itemIdx < 1 || itemIdx > len(checklist.Items) {
+									m.popupMsg = "Error: invalid checklist item number"
+									return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+								}
+								item := checklist.Items[itemIdx-1]
+								switch itemAction {
+								case "rename":
+									name := strings.TrimSpace(strings.TrimPrefix(val, "/checklist item rename "+parts[3]+" "+parts[4]))
+									if name == "" {
+										m.popupMsg = "Error: new checklist item name required"
+										return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+									}
+									m.loading = true
+									m.loadingMsg = "Renaming checklist item..."
+									return m, tea.Batch(m.spinner.Tick, func() tea.Msg {
+										if err := m.client.UpdateChecklistItem(checklist.ID, item.ID, name, item.Resolved); err != nil {
+											return errMsg(err)
+										}
+										return refreshTaskDetailCmd(m.client, m.selectedTask.ID, m.selectedTeam, m.detailBackState)()
+									})
+								case "toggle":
+									m.loading = true
+									m.loadingMsg = "Updating checklist item..."
+									return m, tea.Batch(m.spinner.Tick, func() tea.Msg {
+										if err := m.client.UpdateChecklistItem(checklist.ID, item.ID, item.Name, !item.Resolved); err != nil {
+											return errMsg(err)
+										}
+										return refreshTaskDetailCmd(m.client, m.selectedTask.ID, m.selectedTeam, m.detailBackState)()
+									})
+								case "delete":
+									m.loading = true
+									m.loadingMsg = "Deleting checklist item..."
+									return m, tea.Batch(m.spinner.Tick, func() tea.Msg {
+										if err := m.client.DeleteChecklistItem(checklist.ID, item.ID); err != nil {
+											return errMsg(err)
+										}
+										return refreshTaskDetailCmd(m.client, m.selectedTask.ID, m.selectedTeam, m.detailBackState)()
+									})
+								}
+							}
+						}
+					}
+				}
 			} else if strings.HasPrefix(val, "/attach ") {
 				if m.prevState == stateTaskDetail {
 					rest := strings.TrimSpace(strings.TrimPrefix(val, "/attach "))
@@ -3419,6 +3581,28 @@ func (m *AppModel) updateViewportContent() {
 	b.WriteString("\n")
 
 	b.WriteString(divider + "\n\n")
+	b.WriteString(SectionHeaderStyle.Render("CHECKLISTS") + "\n")
+	if len(m.selectedTask.Checklists) > 0 {
+		for i, cl := range m.selectedTask.Checklists {
+			b.WriteString(fmt.Sprintf("%d. %s\n", i+1, cl.Name))
+			if len(cl.Items) == 0 {
+				b.WriteString("   " + lipgloss.NewStyle().Foreground(ColorSubtext).Render("No items.") + "\n")
+				continue
+			}
+			for j, item := range cl.Items {
+				marker := "[ ]"
+				if item.Resolved {
+					marker = "[x]"
+				}
+				b.WriteString(fmt.Sprintf("   %d.%d %s %s\n", i+1, j+1, marker, item.Name))
+			}
+		}
+	} else {
+		b.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext).Render("No checklists."))
+	}
+	b.WriteString("\n\n")
+
+	b.WriteString(divider + "\n\n")
 	b.WriteString(SectionHeaderStyle.Render("ATTACHMENTS") + "\n")
 	if len(m.selectedTask.Attachments) > 0 {
 		for i, a := range m.selectedTask.Attachments {
@@ -3530,6 +3714,13 @@ func (m *AppModel) updateHelpContent() {
 	b.WriteString("• /copydesc        : Copy ticket description to clipboard\n")
 	b.WriteString("• /editext         : Edit description in external $EDITOR\n")
 	b.WriteString("• /subtask         : Create a new subtask\n")
+	b.WriteString("• /checklist add <name>                    : Create a checklist\n")
+	b.WriteString("• /checklist rename <checklist> <name>     : Rename a checklist by number\n")
+	b.WriteString("• /checklist delete <checklist>            : Delete a checklist by number\n")
+	b.WriteString("• /checklist item add <checklist> <name>   : Add an item to a checklist\n")
+	b.WriteString("• /checklist item rename <checklist> <item> <name> : Rename a checklist item\n")
+	b.WriteString("• /checklist item toggle <checklist> <item>        : Toggle checklist item state\n")
+	b.WriteString("• /checklist item delete <checklist> <item>        : Delete a checklist item\n")
 	b.WriteString("• /attach open <n>     : Open attachment preview in browser\n")
 	b.WriteString("• /attach download <n> : Trigger attachment download\n")
 	b.WriteString("• /attach share <n>    : Copy attachment URL\n")

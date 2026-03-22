@@ -328,6 +328,18 @@ type Attachment struct {
 	URLWithQuery string `json:"url_w_query"`
 }
 
+type ChecklistItem struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Resolved bool   `json:"resolved"`
+}
+
+type Checklist struct {
+	ID    string          `json:"id"`
+	Name  string          `json:"name"`
+	Items []ChecklistItem `json:"items"`
+}
+
 func (c *Client) GetTeamMembers(teamID string) ([]Member, error) {
 	endpoint := fmt.Sprintf("/team/%s/member", teamID)
 	data, err := c.doReq("GET", endpoint, nil)
@@ -351,6 +363,7 @@ type Task struct {
 	Priority            *Priority    `json:"priority,omitempty"`
 	Parent              *string      `json:"parent,omitempty"`
 	Attachments         []Attachment `json:"attachments"`
+	Checklists          []Checklist  `json:"checklists"`
 	DateCreated         string       `json:"date_created"`
 	Creator             Assignee     `json:"creator"`
 	MarkdownDescription string `json:"markdown_description"`
@@ -480,6 +493,53 @@ func (c *Client) UpdatePoints(taskID string, points float64) error {
 	body, _ := json.Marshal(reqBody)
 	
 	_, err := c.doReq("PUT", endpoint, body)
+	return err
+}
+
+func (c *Client) CreateChecklist(taskID, name string) error {
+	endpoint := fmt.Sprintf("/task/%s/checklist", taskID)
+	reqBody := map[string]interface{}{"name": name}
+	body, _ := json.Marshal(reqBody)
+	_, err := c.doReq("POST", endpoint, body)
+	return err
+}
+
+func (c *Client) UpdateChecklist(checklistID, name string) error {
+	endpoint := fmt.Sprintf("/checklist/%s", checklistID)
+	reqBody := map[string]interface{}{"name": name}
+	body, _ := json.Marshal(reqBody)
+	_, err := c.doReq("PUT", endpoint, body)
+	return err
+}
+
+func (c *Client) DeleteChecklist(checklistID string) error {
+	endpoint := fmt.Sprintf("/checklist/%s", checklistID)
+	_, err := c.doReq("DELETE", endpoint, nil)
+	return err
+}
+
+func (c *Client) CreateChecklistItem(checklistID, name string) error {
+	endpoint := fmt.Sprintf("/checklist/%s/checklist_item", checklistID)
+	reqBody := map[string]interface{}{"name": name}
+	body, _ := json.Marshal(reqBody)
+	_, err := c.doReq("POST", endpoint, body)
+	return err
+}
+
+func (c *Client) UpdateChecklistItem(checklistID, itemID, name string, resolved bool) error {
+	endpoint := fmt.Sprintf("/checklist/%s/checklist_item/%s", checklistID, itemID)
+	reqBody := map[string]interface{}{
+		"name":     name,
+		"resolved": resolved,
+	}
+	body, _ := json.Marshal(reqBody)
+	_, err := c.doReq("PUT", endpoint, body)
+	return err
+}
+
+func (c *Client) DeleteChecklistItem(checklistID, itemID string) error {
+	endpoint := fmt.Sprintf("/checklist/%s/checklist_item/%s", checklistID, itemID)
+	_, err := c.doReq("DELETE", endpoint, nil)
 	return err
 }
 
