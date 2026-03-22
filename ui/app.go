@@ -535,6 +535,7 @@ type AppModel struct {
 	pendingDeleteListName string
 	pendingDeleteListFolderID string
 	filePickerPath string
+	filePickerShowHidden bool
 	externalEditTarget string
 	currentUser      string
 	currentUserID    int
@@ -1923,7 +1924,6 @@ func (m *AppModel) updateCommandSuggestions() {
 		sugs = append(sugs, Suggestion{"/attach download ", "Download an attachment by number (e.g. /attach download 1)"})
 		sugs = append(sugs, Suggestion{"/attach share ", "Copy an attachment URL to your clipboard by number (e.g. /attach share 1)"})
 		sugs = append(sugs, Suggestion{"/attach upload", "Open a file browser to upload an attachment"})
-		sugs = append(sugs, Suggestion{"/attach upload ", "Upload a file directly by path (e.g. /attach upload ~/Desktop/file.png)"})
 		sugs = append(sugs, Suggestion{"/attach paste", "Upload an image from the clipboard"})
 		sugs = append(sugs, Suggestion{"/comment edit ", "Edit a comment by its number (e.g. /comment edit 1)"})
 		sugs = append(sugs, Suggestion{"/priority ", "Set task priority (urgent, high, normal, low, none)"})
@@ -2176,6 +2176,9 @@ func (m *AppModel) openFilePicker(path string) error {
 	}
 
 	for _, entry := range entries {
+		if !m.filePickerShowHidden && strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
 		item := filePickerItem{
 			Name:  entry.Name(),
 			Path:  filepath.Join(absPath, entry.Name()),
@@ -2239,6 +2242,21 @@ func (m *AppModel) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else if m.state == stateSpaces {
 				m.state = stateTeams
 				m.activeList = &m.teamsList
+			}
+			return m, nil
+		case ".", "H":
+			if m.state == stateFilePicker {
+				m.filePickerShowHidden = !m.filePickerShowHidden
+				if err := m.openFilePicker(m.filePickerPath); err != nil {
+					m.popupMsg = "Error: " + err.Error()
+					return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+				}
+				if m.filePickerShowHidden {
+					m.popupMsg = "Showing hidden files"
+				} else {
+					m.popupMsg = "Hiding hidden files"
+				}
+				return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
 			}
 			return m, nil
 		case "a", "n":
@@ -3566,7 +3584,6 @@ func (m *AppModel) updateHelpContent() {
 	b.WriteString("• /attach download <n> : Trigger attachment download\n")
 	b.WriteString("• /attach share <n>    : Copy attachment URL\n")
 	b.WriteString("• /attach upload        : Open a file browser to upload an attachment\n")
-	b.WriteString("• /attach upload <path> : Upload a file directly by path\n")
 	b.WriteString("• /attach paste        : Upload an image from the clipboard\n")
 	b.WriteString("• c                : Add a comment\n")
 	b.WriteString("• e                : Edit description (inline)\n")
@@ -3840,7 +3857,7 @@ func (m *AppModel) View() string {
 			}
 			if lastIdx >= 0 {
 				style := lipgloss.NewStyle().Foreground(ColorSubtext)
-				lines[lastIdx] = strings.TrimRight(lines[lastIdx], " ") + style.Render(" • enter: open folder/upload file • esc: cancel")
+				lines[lastIdx] = strings.TrimRight(lines[lastIdx], " ") + style.Render(" • enter: open folder/upload file • .: hidden • esc: cancel")
 				view = strings.Join(lines, "\n")
 			}
 		}
