@@ -42,6 +42,7 @@ const (
 	stateEditComment
 	stateConfirmProfileDelete
 	stateConfirmListDelete
+	stateConfirmDiscardDesc
 )
 
 // Item Wrappers
@@ -174,6 +175,8 @@ func (m *AppModel) stateLabel() string {
 		return "Confirm Profile Delete"
 	case stateConfirmListDelete:
 		return "Confirm List Delete"
+	case stateConfirmDiscardDesc:
+		return "Confirm Discard Description"
 	default:
 		return "Unknown"
 	}
@@ -1547,6 +1550,8 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateConfirmProfileDelete(msg)
 	case stateConfirmListDelete:
 		return m.updateConfirmListDelete(msg)
+	case stateConfirmDiscardDesc:
+		return m.updateConfirmDiscardDesc(msg)
 	}
 
 	return m, tea.Batch(cmds...)
@@ -1567,6 +1572,12 @@ func (m *AppModel) editableDescription() string {
 		return m.selectedTask.MarkdownDescription
 	}
 	return m.selectedTask.Desc
+}
+
+func (m *AppModel) hasUnsavedDescriptionChanges() bool {
+	current := strings.TrimRight(m.descInput.Value(), "\n")
+	original := strings.TrimRight(m.editableDescription(), "\n")
+	return current != original
 }
 
 func (m *AppModel) refreshEditDescLayout() {
@@ -2305,6 +2316,10 @@ func (m *AppModel) updateEditDesc(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.Type {
 		case tea.KeyEsc:
 			m.descInput.Blur()
+			if m.hasUnsavedDescriptionChanges() {
+				m.state = stateConfirmDiscardDesc
+				return m, nil
+			}
 			m.state = stateTaskDetail
 			return m, nil
 		case tea.KeyCtrlS:
@@ -2411,6 +2426,23 @@ func (m *AppModel) updateConfirmListDelete(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.state = m.prevState
 			m.popupMsg = "List deletion cancelled"
 			return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+		}
+	}
+	return m, nil
+}
+
+func (m *AppModel) updateConfirmDiscardDesc(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch strings.ToLower(msg.String()) {
+		case "y", "enter":
+			m.descInput.SetValue(m.editableDescription())
+			m.state = stateTaskDetail
+			return m, nil
+		case "n", "esc", "q":
+			m.state = stateEditDesc
+			m.descInput.Focus()
+			return m, textarea.Blink
 		}
 	}
 	return m, nil
@@ -3435,6 +3467,8 @@ func (m *AppModel) breadcrumb() string {
 		parts = append(parts, "Profiles", "Delete Profile")
 	case stateConfirmListDelete:
 		parts = append(parts, "Lists", "Delete List")
+	case stateConfirmDiscardDesc:
+		parts = append(parts, "Task", "Discard Description Changes")
 	}
 
 	if len(parts) == 0 {
@@ -3538,6 +3572,17 @@ func (m *AppModel) View() string {
 				TitleStyle.Render("Delete List?") + "\n\n" +
 					fmt.Sprintf("Delete list %q?", m.pendingDeleteListName) + "\n\n" +
 					lipgloss.NewStyle().Foreground(ColorSubtext).Render("y/enter: yes • n/esc: no"),
+			)
+		mainContent = lipgloss.Place(m.width, m.height-8, lipgloss.Center, lipgloss.Center, box)
+	case stateConfirmDiscardDesc:
+		box := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(ColorBorder).
+			Padding(1, 2).
+			Render(
+				TitleStyle.Render("Discard Description Changes?") + "\n\n" +
+					"Your unsaved description edits will be lost." + "\n\n" +
+					lipgloss.NewStyle().Foreground(ColorSubtext).Render("y/enter: discard • n/esc: keep editing"),
 			)
 		mainContent = lipgloss.Place(m.width, m.height-8, lipgloss.Center, lipgloss.Center, box)
 	case stateCommand:
