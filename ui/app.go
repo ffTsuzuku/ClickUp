@@ -989,100 +989,6 @@ func expandUserPath(path string) string {
 	return path
 }
 
-func extractClipboardImagePath() (string, func(), error) {
-	tmp, err := os.CreateTemp("", "clickup-clipboard-*.png")
-	if err != nil {
-		return "", nil, err
-	}
-	tmpPath := tmp.Name()
-	tmp.Close()
-
-	checkExtractedFile := func() error {
-		info, err := os.Stat(tmpPath)
-		if err != nil {
-			return err
-		}
-		if info.Size() == 0 {
-			return fmt.Errorf("clipboard image capture produced an empty file")
-		}
-		return nil
-	}
-
-	if _, err := exec.LookPath("pngpaste"); err == nil {
-		cmd := exec.Command("pngpaste", tmpPath)
-		if out, err := cmd.CombinedOutput(); err == nil {
-			if err := checkExtractedFile(); err == nil {
-				cleanup := func() { _ = os.Remove(tmpPath) }
-				return tmpPath, cleanup, nil
-			}
-		} else {
-			_ = out
-		}
-		_ = os.Remove(tmpPath)
-		tmp, err = os.CreateTemp("", "clickup-clipboard-*.png")
-		if err != nil {
-			return "", nil, err
-		}
-		tmpPath = tmp.Name()
-		tmp.Close()
-	}
-
-	script := `
-import AppKit
-import Foundation
-
-guard let outputPath = ProcessInfo.processInfo.environment["TOTUI_CLIPBOARD_IMAGE_PATH"], !outputPath.isEmpty else {
-    FileHandle.standardError.write(Data("Missing output path.\n".utf8))
-    exit(2)
-}
-let pasteboard = NSPasteboard.general
-
-func writeImage(_ image: NSImage) throws {
-    guard let tiffData = image.tiffRepresentation,
-          let rep = NSBitmapImageRep(data: tiffData),
-          let pngData = rep.representation(using: .png, properties: [:]),
-          !pngData.isEmpty else {
-        throw NSError(domain: "totui.clipboard", code: 1, userInfo: [NSLocalizedDescriptionKey: "Clipboard image could not be converted to PNG."])
-    }
-    try pngData.write(to: URL(fileURLWithPath: outputPath))
-}
-
-if let images = pasteboard.readObjects(forClasses: [NSImage.self], options: nil) as? [NSImage],
-   let image = images.first {
-    try writeImage(image)
-} else if let pngData = pasteboard.data(forType: .png),
-          !pngData.isEmpty,
-          let image = NSImage(data: pngData) {
-    try writeImage(image)
-} else if let tiffData = pasteboard.data(forType: .tiff),
-          !tiffData.isEmpty,
-          let image = NSImage(data: tiffData) {
-    try writeImage(image)
-} else {
-    FileHandle.standardError.write(Data("No image found in clipboard.\n".utf8))
-    exit(2)
-}
-`
-
-	cmd := exec.Command("swift", "-e", script)
-	cmd.Env = append(os.Environ(), "TOTUI_CLIPBOARD_IMAGE_PATH="+tmpPath)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		_ = os.Remove(tmpPath)
-		msg := strings.TrimSpace(string(out))
-		if msg == "" {
-			msg = err.Error()
-		}
-		return "", nil, fmt.Errorf("clipboard image capture failed: %s", msg)
-	}
-	if err := checkExtractedFile(); err != nil {
-		_ = os.Remove(tmpPath)
-		return "", nil, err
-	}
-
-	cleanup := func() { _ = os.Remove(tmpPath) }
-	return tmpPath, cleanup, nil
-}
-
 func uploadAttachmentCmd(c *clickup.Client, taskID, teamID, sourcePath string, backState state, popup string, cleanup func()) tea.Cmd {
 	return func() tea.Msg {
 		if cleanup != nil {
@@ -1924,7 +1830,6 @@ func (m *AppModel) updateCommandSuggestions() {
 		sugs = append(sugs, Suggestion{"/attach download ", "Download an attachment by number (e.g. /attach download 1)"})
 		sugs = append(sugs, Suggestion{"/attach share ", "Copy an attachment URL to your clipboard by number (e.g. /attach share 1)"})
 		sugs = append(sugs, Suggestion{"/attach upload", "Open a file browser to upload an attachment"})
-		sugs = append(sugs, Suggestion{"/attach paste", "Upload an image from the clipboard"})
 		sugs = append(sugs, Suggestion{"/comment edit ", "Edit a comment by its number (e.g. /comment edit 1)"})
 		sugs = append(sugs, Suggestion{"/priority ", "Set task priority (urgent, high, normal, low, none)"})
 		sugs = append(sugs, Suggestion{"/priority urgent", "Set priority to Urgent"})
@@ -3147,17 +3052,6 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.loadingMsg = "Uploading attachment..."
 						return m, tea.Batch(m.spinner.Tick, uploadAttachmentCmd(m.client, m.selectedTask.ID, m.selectedTeam, sourcePath, m.prevState, "Uploaded attachment", nil))
 					}
-					if action == "paste" {
-						sourcePath, cleanup, err := extractClipboardImagePath()
-						if err != nil {
-							m.popupMsg = "Error: " + err.Error()
-							return m, tea.Tick(time.Second*3, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
-						}
-						m.loading = true
-						m.loadingMsg = "Uploading clipboard image..."
-						return m, tea.Batch(m.spinner.Tick, uploadAttachmentCmd(m.client, m.selectedTask.ID, m.selectedTeam, sourcePath, m.prevState, "Uploaded clipboard image", cleanup))
-					}
-
 					if hasArg {
 						idx, err := strconv.Atoi(arg)
 						if err == nil && idx > 0 && idx <= len(m.selectedTask.Attachments) {
@@ -3584,7 +3478,6 @@ func (m *AppModel) updateHelpContent() {
 	b.WriteString("• /attach download <n> : Trigger attachment download\n")
 	b.WriteString("• /attach share <n>    : Copy attachment URL\n")
 	b.WriteString("• /attach upload        : Open a file browser to upload an attachment\n")
-	b.WriteString("• /attach paste        : Upload an image from the clipboard\n")
 	b.WriteString("• c                : Add a comment\n")
 	b.WriteString("• e                : Edit description (inline)\n")
 	b.WriteString("• E                : Edit description in external $EDITOR\n")
