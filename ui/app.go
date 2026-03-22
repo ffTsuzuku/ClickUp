@@ -1244,8 +1244,24 @@ func (m *AppModel) Init() tea.Cmd {
 func (m *AppModel) updateLayout() {
 	h, v := BaseStyle.GetFrameSize()
 
-	// Header is ~11-12 lines, plus 1 for sticky hint bar
-	contentH := m.height - v - 2 - 13
+	headerH := lipgloss.Height(m.renderHeader())
+	breadcrumbH := 0
+	if breadcrumb := m.breadcrumb(); breadcrumb != "" {
+		breadcrumbH = lipgloss.Height(breadcrumb) + 2
+	}
+
+	bottomBarH := 3
+	auxH := 0
+	switch m.state {
+	case stateCreateTask, stateCreateSubtask, stateEditTitle:
+		auxH = 3
+	case stateComment, stateEditComment:
+		auxH = 4
+	case stateTaskDetail:
+		auxH = 1
+	}
+
+	contentH := m.height - v - headerH - breadcrumbH - bottomBarH - auxH
 
 	if m.state == stateCommand {
 		menuH := len(m.filteredSuggest)
@@ -3758,15 +3774,13 @@ func (m *AppModel) renderHeader() string {
 
 	logo := redStyle.Render("╺") + whiteStyle.Render("❯") + greenStyle.Render("╸")
 
-	ascii := `
-     ______     __         __     ______     __  __     __  __     ______  
-    /\  ___\   /\ \       /\ \   /\  ___\   /\ \/ /    /\ \/\ \   /\  == \ 
-    \ \ \____  \ \ \____  \ \ \  \ \ \____  \ \  _"-.  \ \ \_\ \  \ \  _-/ 
-     \ \_____\  \ \_____\  \ \_\  \ \_____\  \ \_\ \_\  \ \_____\  \ \_\   
-      \/_____/   \/_____/   \/_/   \/_____/   \/_/\/_/   \/_____/   \/_/   
-`
+	ascii := ` ______     __         __     ______     __  __     __  __     ______  
+/\  ___\   /\ \       /\ \   /\  ___\   /\ \/ /    /\ \/\ \   /\  == \ 
+\ \ \____  \ \ \____  \ \ \  \ \ \____  \ \  _"-.  \ \ \_\ \  \ \  _-/ 
+ \ \_____\  \ \_____\  \ \_\  \ \_____\  \ \_\ \_\  \ \_____\  \ \_\   
+  \/_____/   \/_____/   \/_/   \/_____/   \/_/\/_/   \/_____/   \/_/`
 
-	banner := lipgloss.NewStyle().Foreground(ColorPrimary).Render(ascii)
+	banner := HeaderBannerStyle.Foreground(ColorPrimary).Render(ascii)
 	version := lipgloss.NewStyle().Foreground(ColorSubtext).Render("v1.2.0")
 
 	infoStyle := lipgloss.NewStyle().Foreground(ColorText)
@@ -3784,9 +3798,16 @@ func (m *AppModel) renderHeader() string {
 	}
 	workspaceLine := infoStyle.Render("Workspace: ") + ColorSecondaryStyle.Render(workspace)
 
-	headerInfo := fmt.Sprintf("\n  %s  %s\n\n  %s\n  %s\n  %s", logo, version, profileLine, userLine, workspaceLine)
+	headerInfo := lipgloss.JoinVertical(
+		lipgloss.Left,
+		logo+"  "+version,
+		"",
+		profileLine,
+		userLine,
+		workspaceLine,
+	)
 
-	return lipgloss.JoinVertical(lipgloss.Left, banner, headerInfo)
+	return HeaderInsetStyle.Render(lipgloss.JoinVertical(lipgloss.Left, banner, "", headerInfo))
 }
 
 func (m *AppModel) selectedTeamName() string {
@@ -3949,7 +3970,7 @@ func (m *AppModel) breadcrumb() string {
 		return ""
 	}
 
-	return BreadcrumbStyle.Render(strings.Join(parts, "  >  "))
+	return HeaderInsetStyle.Render(BreadcrumbStyle.Render(strings.Join(parts, "  >  ")))
 }
 
 func (m *AppModel) View() string {

@@ -15,6 +15,12 @@ var (
 	BaseStyle = lipgloss.NewStyle().
 			Padding(1, 2)
 
+	HeaderInsetStyle = lipgloss.NewStyle().
+			PaddingLeft(2)
+
+	HeaderBannerStyle = lipgloss.NewStyle().
+			MarginTop(1)
+
 	TitleStyle = lipgloss.NewStyle().
 			Foreground(ColorPrimary).
 			Bold(true).
