@@ -170,6 +170,22 @@ func (c *Client) CreateSpace(teamID, name string) (*Space, error) {
 	return &space, nil
 }
 
+func (c *Client) UpdateSpace(spaceID, name string) (*Space, error) {
+	endpoint := fmt.Sprintf("/space/%s", spaceID)
+	reqBody := map[string]interface{}{"name": name}
+	body, _ := json.Marshal(reqBody)
+	data, err := c.doReq("PUT", endpoint, body)
+	if err != nil {
+		return nil, err
+	}
+
+	var space Space
+	if err := json.Unmarshal(data, &space); err != nil {
+		return nil, err
+	}
+	return &space, nil
+}
+
 func (c *Client) CreateList(folderID, name string) (*List, error) {
 	endpoint := fmt.Sprintf("/folder/%s/list", folderID)
 	reqBody := map[string]interface{}{"name": name}

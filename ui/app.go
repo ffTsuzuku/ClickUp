@@ -544,6 +544,10 @@ type spaceCreatedMsg struct {
 	Spaces []clickup.Space
 	Name   string
 }
+type spaceRenamedMsg struct {
+	Spaces []clickup.Space
+	Name   string
+}
 type listCreatedMsg struct {
 	Hierarchy *clickup.SpaceHierarchy
 	Name      string
@@ -681,6 +685,19 @@ func createSpaceCmd(c *clickup.Client, teamID, name string) tea.Cmd {
 			return errMsg(err)
 		}
 		return spaceCreatedMsg{Spaces: spaces, Name: name}
+	}
+}
+
+func renameSpaceCmd(c *clickup.Client, teamID, spaceID, name string) tea.Cmd {
+	return func() tea.Msg {
+		if _, err := c.UpdateSpace(spaceID, name); err != nil {
+			return errMsg(err)
+		}
+		spaces, err := c.GetSpaces(teamID)
+		if err != nil {
+			return errMsg(err)
+		}
+		return spaceRenamedMsg{Spaces: spaces, Name: name}
 	}
 }
 
@@ -1305,6 +1322,18 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.activeList = &m.spacesList
 		m.popupMsg = "Created space " + msg.Name
 		return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+	case spaceRenamedMsg:
+		m.loading = false
+		m.allSpaces = msg.Spaces
+		var items []list.Item
+		for _, s := range msg.Spaces {
+			items = append(items, spaceItem(s))
+		}
+		m.spacesList.SetItems(items)
+		m.state = stateSpaces
+		m.activeList = &m.spacesList
+		m.popupMsg = "Renamed space to " + msg.Name
+		return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
 	case listCreatedMsg:
 		m.loading = false
 		m.allFolders = msg.Hierarchy.Folders
@@ -1643,6 +1672,7 @@ func (m *AppModel) updateCommandSuggestions() {
 	sugs = append(sugs, Suggestion{"/ticket ", "Open a ticket directly by ID"})
 	sugs = append(sugs, Suggestion{"/search ", "Search tickets across the workspace"})
 	sugs = append(sugs, Suggestion{"/space create ", "Create a new Space in the current Workspace"})
+	sugs = append(sugs, Suggestion{"/space rename ", "Rename the highlighted Space"})
 	sugs = append(sugs, Suggestion{"/list create ", "Create a new List in the current Folder or Space"})
 	sugs = append(sugs, Suggestion{"/list rename ", "Rename the highlighted List"})
 	sugs = append(sugs, Suggestion{"/list delete", "Delete the highlighted List"})
@@ -1737,6 +1767,7 @@ func (m *AppModel) updateCommandSuggestions() {
 		}
 	} else if m.prevState == stateSpaces {
 		sugs = append(sugs, Suggestion{"/filter", "Filter spaces by name"})
+		sugs = append(sugs, Suggestion{"/space rename ", "Rename the highlighted Space"})
 		for _, t := range m.allSpaces {
 			sugs = append(sugs, Suggestion{"/filter " + strings.ToLower(t.Name), "Find space " + t.Name})
 		}
@@ -2465,6 +2496,32 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.loading = true
 				m.loadingMsg = "Creating space..."
 				return m, tea.Batch(m.spinner.Tick, createSpaceCmd(m.client, teamID, name))
+			} else if strings.HasPrefix(val, "/space rename ") {
+				if m.prevState != stateSpaces {
+					m.popupMsg = "Error: /space rename only works from the spaces view"
+					return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+				}
+				name := strings.TrimSpace(strings.TrimPrefix(val, "/space rename "))
+				if name == "" {
+					m.popupMsg = "Error: new space name required"
+					return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+				}
+				selected, ok := m.activeList.SelectedItem().(spaceItem)
+				if !ok {
+					m.popupMsg = "Error: highlight a space first"
+					return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+				}
+				teamID := m.selectedTeam
+				if teamID == "" && m.cfg != nil {
+					teamID = m.cfg.ClickupTeamID
+				}
+				if teamID == "" {
+					m.popupMsg = "Error: select a Workspace first"
+					return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+				}
+				m.loading = true
+				m.loadingMsg = "Renaming space..."
+				return m, tea.Batch(m.spinner.Tick, renameSpaceCmd(m.client, teamID, selected.ID, name))
 			} else if strings.HasPrefix(val, "/list create ") {
 				name := strings.TrimSpace(strings.TrimPrefix(val, "/list create "))
 				if name == "" {
@@ -3154,6 +3211,7 @@ func (m *AppModel) updateHelpContent() {
 	b.WriteString("• /search <text>           : Search tickets across the workspace\n")
 	b.WriteString("• /search status:<status> assignee:<name> <text> : Search with filters\n")
 	b.WriteString("• /space create <name>     : Create a new Space in the current Workspace\n")
+	b.WriteString("• /space rename <name>     : Rename the highlighted Space in the spaces view\n")
 	b.WriteString("• /list create <name>      : Create a new List in the current Folder or Space\n")
 	b.WriteString("• /list rename <name>      : Rename the highlighted List in the list view\n")
 	b.WriteString("• /list delete             : Delete the highlighted List after confirmation\n")
