@@ -38,6 +38,7 @@ const (
 	stateHelp
 	stateCreateTask
 	stateMovePicker
+	stateEditTitle
 	stateEditDesc
 	stateCreateSubtask
 	stateEditComment
@@ -189,6 +190,8 @@ func (m *AppModel) stateLabel() string {
 		return "Create Task"
 	case stateMovePicker:
 		return "Move Picker"
+	case stateEditTitle:
+		return "Edit Title"
 	case stateEditDesc:
 		return "Edit Description"
 	case stateCreateSubtask:
@@ -1628,6 +1631,8 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateCreateTask(msg)
 	case stateMovePicker:
 		return m.updateMovePicker(msg)
+	case stateEditTitle:
+		return m.updateEditTitle(msg)
 	case stateEditDesc:
 		return m.updateEditDesc(msg)
 	case stateCreateSubtask:
@@ -1822,6 +1827,7 @@ func (m *AppModel) updateCommandSuggestions() {
 		sugs = append(sugs, Suggestion{"/delete", "Delete this ticket permanently"})
 		sugs = append(sugs, Suggestion{"/move", "Move this ticket to another list"})
 		sugs = append(sugs, Suggestion{"/assign ", "Change assignee (e.g. /assign deep)"})
+		sugs = append(sugs, Suggestion{"/title", "Edit the ticket title"})
 		sugs = append(sugs, Suggestion{"/desc", "Edit the ticket description (inline)"})
 		sugs = append(sugs, Suggestion{"/copydesc", "Copy the ticket description to your clipboard"})
 		sugs = append(sugs, Suggestion{"/editext", "Edit description in $EDITOR (vim etc)"})
@@ -2295,6 +2301,12 @@ func (m *AppModel) updateDetail(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.state = stateComment
 			m.commentInput.Focus()
 			return m, textinput.Blink
+		case "T":
+			m.state = stateEditTitle
+			m.taskInput.SetValue(m.selectedTask.Name)
+			m.taskInput.Focus()
+			m.taskInput.SetCursor(len(m.taskInput.Value()))
+			return m, textinput.Blink
 		case "e":
 			m.state = stateEditDesc
 			m.descInput.SetValue(m.editableDescription())
@@ -2491,6 +2503,41 @@ func (m *AppModel) updateMovePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+func (m *AppModel) updateEditTitle(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.Type {
+		case tea.KeyEsc:
+			m.taskInput.Blur()
+			m.state = stateTaskDetail
+			return m, nil
+		case tea.KeyEnter:
+			name := strings.TrimSpace(m.taskInput.Value())
+			if name == "" {
+				return m, nil
+			}
+			m.taskInput.Blur()
+			m.state = stateTaskDetail
+			if err := m.client.UpdateTaskName(m.selectedTask.ID, name); err == nil {
+				m.selectedTask.Name = name
+				for i, t := range m.allTasks {
+					if t.ID == m.selectedTask.ID {
+						m.allTasks[i].Name = name
+						break
+					}
+				}
+				m.updateViewportContent()
+				m.applyTaskFilter("")
+				m.popupMsg = "Updated title"
+				return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+			}
+		}
+	}
+	var cmd tea.Cmd
+	m.taskInput, cmd = m.taskInput.Update(msg)
+	return m, cmd
 }
 
 func (m *AppModel) updateEditDesc(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -3007,6 +3054,14 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.descInput.Focus()
 					return m, textarea.Blink
 				}
+			} else if strings.HasPrefix(val, "/title") {
+				if m.prevState == stateTaskDetail {
+					m.state = stateEditTitle
+					m.taskInput.SetValue(m.selectedTask.Name)
+					m.taskInput.Focus()
+					m.taskInput.SetCursor(len(m.taskInput.Value()))
+					return m, textinput.Blink
+				}
 			} else if strings.HasPrefix(val, "/copydesc") {
 				if m.prevState == stateTaskDetail {
 					return m, m.copyTaskDescription()
@@ -3470,6 +3525,7 @@ func (m *AppModel) updateHelpContent() {
 	b.WriteString("• /delete          : Delete this ticket permanently\n")
 	b.WriteString("• /move            : Move this ticket to another list\n")
 	b.WriteString("• /assign <user>   : Assign the ticket to a user\n")
+	b.WriteString("• /title           : Edit the ticket title\n")
 	b.WriteString("• /desc            : Edit description (inline)\n")
 	b.WriteString("• /copydesc        : Copy ticket description to clipboard\n")
 	b.WriteString("• /editext         : Edit description in external $EDITOR\n")
@@ -3479,6 +3535,7 @@ func (m *AppModel) updateHelpContent() {
 	b.WriteString("• /attach share <n>    : Copy attachment URL\n")
 	b.WriteString("• /attach upload        : Open a file browser to upload an attachment\n")
 	b.WriteString("• c                : Add a comment\n")
+	b.WriteString("• T                : Edit title\n")
 	b.WriteString("• e                : Edit description (inline)\n")
 	b.WriteString("• E                : Edit description in external $EDITOR\n")
 	b.WriteString("• D                : Copy ticket description\n")
@@ -3607,7 +3664,7 @@ func (m *AppModel) breadcrumb() string {
 		} else {
 			parts = append(parts, "Lists")
 		}
-	case stateTasks, stateSearchResults, stateTaskDetail, stateComment, stateEditDesc, stateCreateSubtask, stateEditComment:
+	case stateTasks, stateSearchResults, stateTaskDetail, stateComment, stateEditTitle, stateEditDesc, stateCreateSubtask, stateEditComment:
 		parts = append(parts, "Workspaces")
 		if name := m.selectedTeamName(); name != "" {
 			parts = append(parts, "Workspace: "+name)
@@ -3631,7 +3688,7 @@ func (m *AppModel) breadcrumb() string {
 			}
 			parts = append(parts, label)
 		}
-		if m.state == stateTaskDetail || m.state == stateComment || m.state == stateEditDesc || m.state == stateCreateSubtask || m.state == stateEditComment {
+		if m.state == stateTaskDetail || m.state == stateComment || m.state == stateEditTitle || m.state == stateEditDesc || m.state == stateCreateSubtask || m.state == stateEditComment {
 			if m.selectedTask.Name != "" {
 				taskID := m.selectedTask.ID
 				if m.selectedTask.CustomID != "" {
@@ -3756,7 +3813,7 @@ func (m *AppModel) View() string {
 		}
 		mainContent = view
 	case stateTaskDetail:
-		hint := lipgloss.NewStyle().Foreground(ColorSubtext).Render("q: back • a/n: new task • c: comment • e: edit desc • E: vim edit • D: copy desc • t: subtask • o: open • s: copy • r: refresh")
+		hint := lipgloss.NewStyle().Foreground(ColorSubtext).Render("q: back • a/n: new task • c: comment • T: edit title • e: edit desc • E: vim edit • D: copy desc • t: subtask • o: open • s: copy • r: refresh")
 		mainContent = m.vp.View() + "\n" + hint
 	case stateHelp:
 		mainContent = m.vp.View()
@@ -3772,6 +3829,8 @@ func (m *AppModel) View() string {
 		header := TitleStyle.Render(fmt.Sprintf("New Subtask of: %s", m.selectedTask.Name))
 		hint := lipgloss.NewStyle().Foreground(ColorSubtext).Render("Enter to create | Esc to cancel")
 		mainContent = header + "\n\n" + lipgloss.NewStyle().Bold(true).Render("Subtask name: ") + m.taskInput.View() + "\n" + hint
+	case stateEditTitle:
+		mainContent = TitleStyle.Render("Editing Title:") + "\n\n" + lipgloss.NewStyle().Bold(true).Render("Title: ") + m.taskInput.View() + "\n" + lipgloss.NewStyle().Foreground(ColorSubtext).Render("Enter to save | Esc to cancel")
 	case stateMovePicker:
 		var sb strings.Builder
 		sb.WriteString(TitleStyle.Render("Move Ticket To List") + "\n\n")

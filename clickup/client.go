@@ -483,6 +483,18 @@ func (c *Client) UpdatePoints(taskID string, points float64) error {
 	return err
 }
 
+func (c *Client) UpdateTaskName(taskID, name string) error {
+	endpoint := fmt.Sprintf("/task/%s", taskID)
+
+	reqBody := map[string]interface{}{
+		"name": name,
+	}
+	body, _ := json.Marshal(reqBody)
+
+	_, err := c.doReq("PUT", endpoint, body)
+	return err
+}
+
 // CreateTask creates a new task in a given list
 func (c *Client) CreateTask(listID, name string, assignees []int) (*Task, error) {
 	endpoint := fmt.Sprintf("/list/%s/task", listID)
