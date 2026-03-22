@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -43,6 +44,7 @@ const (
 	stateConfirmProfileDelete
 	stateConfirmListDelete
 	stateConfirmDiscardDesc
+	stateFilePicker
 )
 
 // Item Wrappers
@@ -69,6 +71,28 @@ type folderItem clickup.Folder
 func (f folderItem) Title() string       { return f.Name }
 func (f folderItem) Description() string { return "Folder" }
 func (f folderItem) FilterValue() string { return f.Name }
+
+type filePickerItem struct {
+	Name  string
+	Path  string
+	IsDir bool
+}
+
+func (f filePickerItem) Title() string {
+	if f.IsDir {
+		return "[DIR] " + f.Name
+	}
+	return f.Name
+}
+
+func (f filePickerItem) Description() string {
+	if f.IsDir {
+		return "Folder"
+	}
+	return f.Path
+}
+
+func (f filePickerItem) FilterValue() string { return f.Name }
 
 type taskItem clickup.Task
 
@@ -177,6 +201,8 @@ func (m *AppModel) stateLabel() string {
 		return "Confirm List Delete"
 	case stateConfirmDiscardDesc:
 		return "Confirm Discard Description"
+	case stateFilePicker:
+		return "Attachment File Picker"
 	default:
 		return "Unknown"
 	}
@@ -233,6 +259,10 @@ func newBaseModel(cfg *config.Config) *AppModel {
 	searchList.Title = "Search Results"
 	searchList.SetFilteringEnabled(false)
 
+	fileList := list.New(nil, list.NewDefaultDelegate(), 0, 0)
+	fileList.Title = "Upload Attachment"
+	fileList.SetFilteringEnabled(false)
+
 	ci := textarea.New()
 	ci.Placeholder = "Enter comment..."
 	ci.SetWidth(80)
@@ -276,6 +306,7 @@ func newBaseModel(cfg *config.Config) *AppModel {
 		listsList:     listsList,
 		tasksList:     tasksList,
 		searchList:    searchList,
+		fileList:      fileList,
 		commentInput:  ci,
 		taskInput:     ti,
 		descInput:     da,
@@ -455,6 +486,7 @@ type AppModel struct {
 	listsList  list.Model
 	tasksList  list.Model
 	searchList list.Model
+	fileList   list.Model
 
 	allTeams   []clickup.Team
 	allSpaces  []clickup.Space
@@ -502,6 +534,7 @@ type AppModel struct {
 	pendingDeleteListID string
 	pendingDeleteListName string
 	pendingDeleteListFolderID string
+	filePickerPath string
 	externalEditTarget string
 	currentUser      string
 	currentUserID    int
@@ -565,6 +598,12 @@ type listDeletedMsg struct {
 	Hierarchy *clickup.SpaceHierarchy
 	FolderID  string
 	Name      string
+}
+type attachmentUploadedMsg struct {
+	Task     *clickup.Task
+	Comments []clickup.Comment
+	BackState state
+	Popup    string
 }
 type statusUpdatedMsg struct {
 	Task     *clickup.Task
@@ -933,6 +972,138 @@ func attachmentOpenURL(a clickup.Attachment) string {
 	return a.URL
 }
 
+func expandUserPath(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	if path == "~" || strings.HasPrefix(path, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			if path == "~" {
+				return home
+			}
+			return filepath.Join(home, strings.TrimPrefix(path, "~/"))
+		}
+	}
+	return path
+}
+
+func extractClipboardImagePath() (string, func(), error) {
+	tmp, err := os.CreateTemp("", "clickup-clipboard-*.png")
+	if err != nil {
+		return "", nil, err
+	}
+	tmpPath := tmp.Name()
+	tmp.Close()
+
+	checkExtractedFile := func() error {
+		info, err := os.Stat(tmpPath)
+		if err != nil {
+			return err
+		}
+		if info.Size() == 0 {
+			return fmt.Errorf("clipboard image capture produced an empty file")
+		}
+		return nil
+	}
+
+	if _, err := exec.LookPath("pngpaste"); err == nil {
+		cmd := exec.Command("pngpaste", tmpPath)
+		if out, err := cmd.CombinedOutput(); err == nil {
+			if err := checkExtractedFile(); err == nil {
+				cleanup := func() { _ = os.Remove(tmpPath) }
+				return tmpPath, cleanup, nil
+			}
+		} else {
+			_ = out
+		}
+		_ = os.Remove(tmpPath)
+		tmp, err = os.CreateTemp("", "clickup-clipboard-*.png")
+		if err != nil {
+			return "", nil, err
+		}
+		tmpPath = tmp.Name()
+		tmp.Close()
+	}
+
+	script := `
+import AppKit
+import Foundation
+
+guard let outputPath = ProcessInfo.processInfo.environment["TOTUI_CLIPBOARD_IMAGE_PATH"], !outputPath.isEmpty else {
+    FileHandle.standardError.write(Data("Missing output path.\n".utf8))
+    exit(2)
+}
+let pasteboard = NSPasteboard.general
+
+func writeImage(_ image: NSImage) throws {
+    guard let tiffData = image.tiffRepresentation,
+          let rep = NSBitmapImageRep(data: tiffData),
+          let pngData = rep.representation(using: .png, properties: [:]),
+          !pngData.isEmpty else {
+        throw NSError(domain: "totui.clipboard", code: 1, userInfo: [NSLocalizedDescriptionKey: "Clipboard image could not be converted to PNG."])
+    }
+    try pngData.write(to: URL(fileURLWithPath: outputPath))
+}
+
+if let images = pasteboard.readObjects(forClasses: [NSImage.self], options: nil) as? [NSImage],
+   let image = images.first {
+    try writeImage(image)
+} else if let pngData = pasteboard.data(forType: .png),
+          !pngData.isEmpty,
+          let image = NSImage(data: pngData) {
+    try writeImage(image)
+} else if let tiffData = pasteboard.data(forType: .tiff),
+          !tiffData.isEmpty,
+          let image = NSImage(data: tiffData) {
+    try writeImage(image)
+} else {
+    FileHandle.standardError.write(Data("No image found in clipboard.\n".utf8))
+    exit(2)
+}
+`
+
+	cmd := exec.Command("swift", "-e", script)
+	cmd.Env = append(os.Environ(), "TOTUI_CLIPBOARD_IMAGE_PATH="+tmpPath)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		_ = os.Remove(tmpPath)
+		msg := strings.TrimSpace(string(out))
+		if msg == "" {
+			msg = err.Error()
+		}
+		return "", nil, fmt.Errorf("clipboard image capture failed: %s", msg)
+	}
+	if err := checkExtractedFile(); err != nil {
+		_ = os.Remove(tmpPath)
+		return "", nil, err
+	}
+
+	cleanup := func() { _ = os.Remove(tmpPath) }
+	return tmpPath, cleanup, nil
+}
+
+func uploadAttachmentCmd(c *clickup.Client, taskID, teamID, sourcePath string, backState state, popup string, cleanup func()) tea.Cmd {
+	return func() tea.Msg {
+		if cleanup != nil {
+			defer cleanup()
+		}
+
+		if err := c.UploadTaskAttachment(taskID, sourcePath); err != nil {
+			return errMsg(err)
+		}
+
+		task, err := c.GetTask(taskID, teamID)
+		if err != nil {
+			return errMsg(err)
+		}
+		comments, err := fetchCommentsRecursive(taskID, c)
+		if err != nil {
+			return errMsg(err)
+		}
+		return attachmentUploadedMsg{Task: task, Comments: comments, BackState: backState, Popup: popup}
+	}
+}
+
 func (m *AppModel) copyTaskDescription() tea.Cmd {
 	desc := m.editableDescription()
 	clipboard.WriteAll(desc)
@@ -1167,6 +1338,7 @@ func (m *AppModel) updateLayout() {
 	m.listsList.SetSize(m.width-h, contentH)
 	m.tasksList.SetSize(m.width-h, contentH)
 	m.searchList.SetSize(m.width-h, contentH)
+	m.fileList.SetSize(m.width-h, contentH)
 	m.vp.Width = m.width - h
 	m.vp.Height = contentH
 	if m.state == stateEditDesc {
@@ -1272,6 +1444,15 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.prevState = msg.BackState
 		m.updateViewportContent()
 		return m, nil
+	case attachmentUploadedMsg:
+		m.loading = false
+		m.selectedTask = *msg.Task
+		m.selectedComments = msg.Comments
+		m.state = stateTaskDetail
+		m.prevState = msg.BackState
+		m.popupMsg = msg.Popup
+		m.updateViewportContent()
+		return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
 	case taskCreatedMsg:
 		m.loading = false
 		newTask := clickup.Task(msg)
@@ -1526,7 +1707,7 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	switch m.state {
-	case stateTeams, stateSpaces, stateLists, stateTasks, stateSearchResults:
+	case stateTeams, stateSpaces, stateLists, stateTasks, stateSearchResults, stateFilePicker:
 		return m.updateList(msg)
 	case stateTaskDetail:
 		return m.updateDetail(msg)
@@ -1741,6 +1922,9 @@ func (m *AppModel) updateCommandSuggestions() {
 		sugs = append(sugs, Suggestion{"/attach open ", "Open an attachment preview in your browser by number (e.g. /attach open 1)"})
 		sugs = append(sugs, Suggestion{"/attach download ", "Download an attachment by number (e.g. /attach download 1)"})
 		sugs = append(sugs, Suggestion{"/attach share ", "Copy an attachment URL to your clipboard by number (e.g. /attach share 1)"})
+		sugs = append(sugs, Suggestion{"/attach upload", "Open a file browser to upload an attachment"})
+		sugs = append(sugs, Suggestion{"/attach upload ", "Upload a file directly by path (e.g. /attach upload ~/Desktop/file.png)"})
+		sugs = append(sugs, Suggestion{"/attach paste", "Upload an image from the clipboard"})
 		sugs = append(sugs, Suggestion{"/comment edit ", "Edit a comment by its number (e.g. /comment edit 1)"})
 		sugs = append(sugs, Suggestion{"/priority ", "Set task priority (urgent, high, normal, low, none)"})
 		sugs = append(sugs, Suggestion{"/priority urgent", "Set priority to Urgent"})
@@ -1963,12 +2147,75 @@ func (m *AppModel) availableStatuses() []string {
 	return statuses
 }
 
+func (m *AppModel) openFilePicker(path string) error {
+	if path == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return err
+		}
+		path = home
+	}
+
+	path = expandUserPath(path)
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+
+	entries, err := os.ReadDir(absPath)
+	if err != nil {
+		return err
+	}
+
+	var dirs []filePickerItem
+	var files []filePickerItem
+
+	parent := filepath.Dir(absPath)
+	if parent != absPath {
+		dirs = append(dirs, filePickerItem{Name: "..", Path: parent, IsDir: true})
+	}
+
+	for _, entry := range entries {
+		item := filePickerItem{
+			Name:  entry.Name(),
+			Path:  filepath.Join(absPath, entry.Name()),
+			IsDir: entry.IsDir(),
+		}
+		if item.IsDir {
+			dirs = append(dirs, item)
+		} else {
+			files = append(files, item)
+		}
+	}
+
+	sort.Slice(dirs, func(i, j int) bool { return strings.ToLower(dirs[i].Name) < strings.ToLower(dirs[j].Name) })
+	sort.Slice(files, func(i, j int) bool { return strings.ToLower(files[i].Name) < strings.ToLower(files[j].Name) })
+
+	items := make([]list.Item, 0, len(dirs)+len(files))
+	for _, item := range dirs {
+		items = append(items, item)
+	}
+	for _, item := range files {
+		items = append(items, item)
+	}
+
+	m.filePickerPath = absPath
+	m.fileList.Title = "Upload Attachment: " + absPath
+	m.fileList.SetItems(items)
+	m.fileList.Select(0)
+	m.state = stateFilePicker
+	m.activeList = &m.fileList
+	return nil
+}
+
 func (m *AppModel) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "esc", "left":
-			if m.state == stateTasks {
+			if m.state == stateFilePicker {
+				m.state = stateTaskDetail
+			} else if m.state == stateTasks {
 				m.state = stateLists
 				m.activeList = &m.listsList
 			} else if m.state == stateSearchResults {
@@ -2078,6 +2325,19 @@ func (m *AppModel) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.loading = true
 					m.loadingMsg = "Fetching task details..."
 					return m, tea.Batch(m.spinner.Tick, fetchTaskCmd(m.client, i.ID, m.selectedTeam, stateSearchResults))
+				}
+			case stateFilePicker:
+				if i, ok := m.activeList.SelectedItem().(filePickerItem); ok {
+					if i.IsDir {
+						if err := m.openFilePicker(i.Path); err != nil {
+							m.popupMsg = "Error: " + err.Error()
+							return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+						}
+						return m, nil
+					}
+					m.loading = true
+					m.loadingMsg = "Uploading attachment..."
+					return m, tea.Batch(m.spinner.Tick, uploadAttachmentCmd(m.client, m.selectedTask.ID, m.selectedTeam, i.Path, m.prevState, "Uploaded attachment", nil))
 				}
 			}
 			return m, nil
@@ -2843,13 +3103,48 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			} else if strings.HasPrefix(val, "/attach ") {
 				if m.prevState == stateTaskDetail {
-					parts := strings.Fields(val)
-					if len(parts) >= 3 {
-						idx, err := strconv.Atoi(parts[2])
+					rest := strings.TrimSpace(strings.TrimPrefix(val, "/attach "))
+					action, arg, hasArg := rest, "", false
+					if idx := strings.Index(rest, " "); idx >= 0 {
+						action = strings.TrimSpace(rest[:idx])
+						arg = strings.TrimSpace(rest[idx+1:])
+						hasArg = arg != ""
+					}
+					action = strings.ToLower(action)
+
+					if action == "upload" {
+						if !hasArg {
+							if err := m.openFilePicker(m.filePickerPath); err != nil {
+								m.popupMsg = "Error: " + err.Error()
+								return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+							}
+							return m, nil
+						}
+						sourcePath := expandUserPath(arg)
+						if _, err := os.Stat(sourcePath); err != nil {
+							m.popupMsg = "Error: file not found"
+							return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+						}
+						m.loading = true
+						m.loadingMsg = "Uploading attachment..."
+						return m, tea.Batch(m.spinner.Tick, uploadAttachmentCmd(m.client, m.selectedTask.ID, m.selectedTeam, sourcePath, m.prevState, "Uploaded attachment", nil))
+					}
+					if action == "paste" {
+						sourcePath, cleanup, err := extractClipboardImagePath()
+						if err != nil {
+							m.popupMsg = "Error: " + err.Error()
+							return m, tea.Tick(time.Second*3, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+						}
+						m.loading = true
+						m.loadingMsg = "Uploading clipboard image..."
+						return m, tea.Batch(m.spinner.Tick, uploadAttachmentCmd(m.client, m.selectedTask.ID, m.selectedTeam, sourcePath, m.prevState, "Uploaded clipboard image", cleanup))
+					}
+
+					if hasArg {
+						idx, err := strconv.Atoi(arg)
 						if err == nil && idx > 0 && idx <= len(m.selectedTask.Attachments) {
 							attachment := m.selectedTask.Attachments[idx-1]
 							url := attachment.URL
-							action := strings.ToLower(parts[1])
 							if action == "open" {
 								previewURL := attachmentOpenURL(attachment)
 								m.popupMsg = "Opening attachment in browser..."
@@ -3270,6 +3565,9 @@ func (m *AppModel) updateHelpContent() {
 	b.WriteString("• /attach open <n>     : Open attachment preview in browser\n")
 	b.WriteString("• /attach download <n> : Trigger attachment download\n")
 	b.WriteString("• /attach share <n>    : Copy attachment URL\n")
+	b.WriteString("• /attach upload        : Open a file browser to upload an attachment\n")
+	b.WriteString("• /attach upload <path> : Upload a file directly by path\n")
+	b.WriteString("• /attach paste        : Upload an image from the clipboard\n")
 	b.WriteString("• c                : Add a comment\n")
 	b.WriteString("• e                : Edit description (inline)\n")
 	b.WriteString("• E                : Edit description in external $EDITOR\n")
@@ -3469,6 +3767,24 @@ func (m *AppModel) breadcrumb() string {
 		parts = append(parts, "Lists", "Delete List")
 	case stateConfirmDiscardDesc:
 		parts = append(parts, "Task", "Discard Description Changes")
+	case stateFilePicker:
+		if name := m.selectedTeamName(); name != "" {
+			parts = append(parts, "Workspace: "+name)
+		}
+		if name := m.selectedSpaceName(); name != "" {
+			parts = append(parts, "Space: "+name)
+		}
+		if name := m.selectedListName(); name != "" {
+			parts = append(parts, "List: "+name)
+		}
+		if m.selectedTask.Name != "" {
+			taskID := m.selectedTask.ID
+			if m.selectedTask.CustomID != "" {
+				taskID = m.selectedTask.CustomID
+			}
+			parts = append(parts, fmt.Sprintf("Task: [%s] %s", taskID, m.selectedTask.Name))
+		}
+		parts = append(parts, "Upload Attachment")
 	}
 
 	if len(parts) == 0 {
@@ -3491,7 +3807,7 @@ func (m *AppModel) View() string {
 	var mainContent string
 
 	switch m.state {
-	case stateTeams, stateSpaces, stateLists, stateTasks, stateSearchResults:
+	case stateTeams, stateSpaces, stateLists, stateTasks, stateSearchResults, stateFilePicker:
 		view := m.activeList.View()
 		if m.state == stateTasks {
 			// Integrate into the same row as the list help, but trim the justified whitespace
@@ -3514,6 +3830,17 @@ func (m *AppModel) View() string {
 			if lastIdx >= 0 {
 				style := lipgloss.NewStyle().Foreground(ColorSubtext)
 				lines[lastIdx] = strings.TrimRight(lines[lastIdx], " ") + style.Render(" • enter: open ticket • esc: back")
+				view = strings.Join(lines, "\n")
+			}
+		} else if m.state == stateFilePicker {
+			lines := strings.Split(view, "\n")
+			lastIdx := len(lines) - 1
+			for lastIdx >= 0 && strings.TrimSpace(lines[lastIdx]) == "" {
+				lastIdx--
+			}
+			if lastIdx >= 0 {
+				style := lipgloss.NewStyle().Foreground(ColorSubtext)
+				lines[lastIdx] = strings.TrimRight(lines[lastIdx], " ") + style.Render(" • enter: open folder/upload file • esc: cancel")
 				view = strings.Join(lines, "\n")
 			}
 		}

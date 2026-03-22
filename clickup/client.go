@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -40,6 +43,47 @@ func (c *Client) doReq(method, endpoint string, body []byte) ([]byte, error) {
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("API error %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	return io.ReadAll(resp.Body)
+}
+
+func (c *Client) uploadFileReq(endpoint, fieldName, sourcePath string) ([]byte, error) {
+	file, err := os.Open(sourcePath)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile(fieldName, filepath.Base(sourcePath))
+	if err != nil {
+		return nil, err
+	}
+	if _, err := io.Copy(part, file); err != nil {
+		return nil, err
+	}
+	if err := writer.Close(); err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", BaseURL+endpoint, &body)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", c.Token)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
@@ -578,6 +622,12 @@ func (c *Client) UpdateComment(commentID, commentText string) error {
 func (c *Client) DeleteComment(commentID string) error {
 	endpoint := fmt.Sprintf("/comment/%s", commentID)
 	_, err := c.doReq("DELETE", endpoint, nil)
+	return err
+}
+
+func (c *Client) UploadTaskAttachment(taskID, sourcePath string) error {
+	endpoint := fmt.Sprintf("/task/%s/attachment", taskID)
+	_, err := c.uploadFileReq(endpoint, "attachment", sourcePath)
 	return err
 }
 
