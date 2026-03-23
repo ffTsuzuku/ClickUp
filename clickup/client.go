@@ -158,6 +158,11 @@ type List struct {
 	Name string `json:"name"`
 }
 
+type TaskLocation struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
 type SpaceHierarchy struct {
 	Folders []Folder `json:"folders"`
 	Lists   []List   `json:"lists"`
@@ -321,10 +326,10 @@ type Comment struct {
 }
 
 type Attachment struct {
-	ID         string `json:"id"`
-	Title      string `json:"title"`
-	Extension  string `json:"extension"`
-	URL        string `json:"url"`
+	ID           string `json:"id"`
+	Title        string `json:"title"`
+	Extension    string `json:"extension"`
+	URL          string `json:"url"`
 	URLWithQuery string `json:"url_w_query"`
 }
 
@@ -343,30 +348,36 @@ type Checklist struct {
 func (c *Client) GetTeamMembers(teamID string) ([]Member, error) {
 	endpoint := fmt.Sprintf("/team/%s/member", teamID)
 	data, err := c.doReq("GET", endpoint, nil)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	var result struct {
 		Members []Member `json:"members"`
 	}
-	if err := json.Unmarshal(data, &result); err != nil { return nil, err }
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, err
+	}
 	return result.Members, nil
 }
 
 type Task struct {
-	ID                  string       `json:"id"`
-	CustomID            string       `json:"custom_id"`
-	Name                string       `json:"name"`
-	Desc                string       `json:"description"`
-	Status              TaskStatus   `json:"status"`
-	Assignees           []Assignee   `json:"assignees"`
-	URL                 string       `json:"url"`
-	Points              *float64     `json:"points"`
-	Priority            *Priority    `json:"priority,omitempty"`
-	Parent              *string      `json:"parent,omitempty"`
-	Attachments         []Attachment `json:"attachments"`
-	Checklists          []Checklist  `json:"checklists"`
-	DateCreated         string       `json:"date_created"`
-	Creator             Assignee     `json:"creator"`
-	MarkdownDescription string `json:"markdown_description"`
+	ID                  string         `json:"id"`
+	CustomID            string         `json:"custom_id"`
+	Name                string         `json:"name"`
+	Desc                string         `json:"description"`
+	Status              TaskStatus     `json:"status"`
+	Assignees           []Assignee     `json:"assignees"`
+	URL                 string         `json:"url"`
+	Points              *float64       `json:"points"`
+	Priority            *Priority      `json:"priority,omitempty"`
+	Parent              *string        `json:"parent,omitempty"`
+	Attachments         []Attachment   `json:"attachments"`
+	Checklists          []Checklist    `json:"checklists"`
+	DateCreated         string         `json:"date_created"`
+	Creator             Assignee       `json:"creator"`
+	MarkdownDescription string         `json:"markdown_description"`
+	List                List           `json:"list"`
+	Locations           []TaskLocation `json:"locations"`
 }
 
 var escapedMarkdownCharRE = regexp.MustCompile(`\\+([*_` + "`" + `~\[\]\(\)#>!\-\+\|])`)
@@ -393,22 +404,83 @@ func normalizeTask(task *Task) {
 }
 
 func (c *Client) GetTasks(listID string) ([]Task, error) {
-	endpoint := fmt.Sprintf("/list/%s/task?subtasks=true&include_closed=true&include_markdown_description=true", listID)
-	data, err := c.doReq("GET", endpoint, nil)
+	var allTasks []Task
+	for page := 0; ; page++ {
+		endpoint := fmt.Sprintf("/list/%s/task?page=%d&subtasks=true&include_closed=true&include_markdown_description=true&include_timl=true", listID, page)
+		data, err := c.doReq("GET", endpoint, nil)
+		if err != nil {
+			return nil, err
+		}
+
+		var result struct {
+			Tasks    []Task `json:"tasks"`
+			LastPage bool   `json:"last_page"`
+		}
+		if err := json.Unmarshal(data, &result); err != nil {
+			return nil, err
+		}
+		for i := range result.Tasks {
+			normalizeTask(&result.Tasks[i])
+		}
+		allTasks = append(allTasks, result.Tasks...)
+		if result.LastPage || len(result.Tasks) == 0 {
+			break
+		}
+	}
+	return allTasks, nil
+}
+
+func (c *Client) GetTasksForVisibleList(teamID, listID string) ([]Task, error) {
+	tasks, err := c.GetTasks(listID)
 	if err != nil {
 		return nil, err
 	}
+	if teamID == "" {
+		return tasks, nil
+	}
 
-	var result struct {
-		Tasks []Task `json:"tasks"`
+	seen := make(map[string]bool, len(tasks))
+	for _, task := range tasks {
+		seen[task.ID] = true
 	}
-	if err := json.Unmarshal(data, &result); err != nil {
-		return nil, err
+
+	for page := 0; page < 10; page++ {
+		teamTasks, err := c.GetTeamTasks(teamID, page)
+		if err != nil {
+			return nil, err
+		}
+		if len(teamTasks) == 0 {
+			break
+		}
+
+		for _, task := range teamTasks {
+			if seen[task.ID] {
+				continue
+			}
+
+			matchesList := task.List.ID == listID
+			if !matchesList {
+				for _, location := range task.Locations {
+					if location.ID == listID {
+						matchesList = true
+						break
+					}
+				}
+			}
+			if !matchesList {
+				continue
+			}
+
+			seen[task.ID] = true
+			tasks = append(tasks, task)
+		}
+
+		if len(teamTasks) < 100 {
+			break
+		}
 	}
-	for i := range result.Tasks {
-		normalizeTask(&result.Tasks[i])
-	}
-	return result.Tasks, nil
+
+	return tasks, nil
 }
 
 // GetTask fetches a single task by its ClickUp ID or Custom ID
@@ -459,26 +531,26 @@ func (c *Client) AddComment(taskID, comment, parentID string) error {
 	} else {
 		endpoint = fmt.Sprintf("/task/%s/comment", taskID)
 	}
-	
+
 	reqBody := map[string]interface{}{
 		"comment_text": comment,
 		"notify_all":   true,
 	}
 	body, _ := json.Marshal(reqBody)
-	
+
 	_, err := c.doReq("POST", endpoint, body)
 	return err
 }
 
-// UpdateStatus 
+// UpdateStatus
 func (c *Client) UpdateStatus(taskID, status string) error {
 	endpoint := fmt.Sprintf("/task/%s", taskID)
-	
+
 	reqBody := map[string]interface{}{
 		"status": status,
 	}
 	body, _ := json.Marshal(reqBody)
-	
+
 	_, err := c.doReq("PUT", endpoint, body)
 	return err
 }
@@ -486,12 +558,12 @@ func (c *Client) UpdateStatus(taskID, status string) error {
 // UpdatePoints updates the sprint points of a task
 func (c *Client) UpdatePoints(taskID string, points float64) error {
 	endpoint := fmt.Sprintf("/task/%s", taskID)
-	
+
 	reqBody := map[string]interface{}{
 		"points": points,
 	}
 	body, _ := json.Marshal(reqBody)
-	
+
 	_, err := c.doReq("PUT", endpoint, body)
 	return err
 }
@@ -636,6 +708,7 @@ func (c *Client) UpdateDescription(taskID, description string) error {
 	_, err := c.doReq("PUT", endpoint, body)
 	return err
 }
+
 // GetUser fetches the authenticated user's profile
 func (c *Client) GetUser() (*Assignee, error) {
 	data, err := c.doReq("GET", "/user", nil)
@@ -706,12 +779,12 @@ func (c *Client) UploadTaskAttachment(taskID, sourcePath string) error {
 // SetTaskPriority updates the priority of a task (1: Urgent, 2: High, 3: Normal, 4: Low, nil: None)
 func (c *Client) SetTaskPriority(taskID string, priority *int) error {
 	endpoint := fmt.Sprintf("/task/%s", taskID)
-	
+
 	reqBody := map[string]interface{}{
 		"priority": priority,
 	}
 	body, _ := json.Marshal(reqBody)
-	
+
 	_, err := c.doReq("PUT", endpoint, body)
 	return err
 }

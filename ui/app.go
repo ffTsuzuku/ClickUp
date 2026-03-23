@@ -102,6 +102,9 @@ func (t taskItem) Title() string {
 	if t.CustomID != "" {
 		id = t.CustomID
 	}
+	if t.Parent != nil {
+		return fmt.Sprintf("[subtask][%s] %s", id, t.Name)
+	}
 	return fmt.Sprintf("[%s] %s", id, t.Name)
 }
 func (t taskItem) Description() string {
@@ -426,7 +429,7 @@ func hydrateModelDefaults(m *AppModel) (string, error) {
 	}
 
 	m.selectedList = cfg.ClickupListID
-	tasks, err := c.GetTasks(cfg.ClickupListID)
+	tasks, err := c.GetTasksForVisibleList(cfg.ClickupTeamID, cfg.ClickupListID)
 	if err != nil {
 		if isStaleRoutingErr(err) {
 			cfg.ClickupListID = ""
@@ -530,21 +533,21 @@ type AppModel struct {
 	spinner    spinner.Model
 	popupMsg   string
 
-	selectedComments []clickup.Comment
-	editingCommentID string
-	replyToCommentID string
-	replyToUser      string
-	pendingDeleteProfile string
-	pendingDeleteListID string
-	pendingDeleteListName string
+	selectedComments          []clickup.Comment
+	editingCommentID          string
+	replyToCommentID          string
+	replyToUser               string
+	pendingDeleteProfile      string
+	pendingDeleteListID       string
+	pendingDeleteListName     string
 	pendingDeleteListFolderID string
-	filePickerPath string
-	filePickerShowHidden bool
-	externalEditTarget string
-	currentUser      string
-	currentUserID    int
-	activeProfile    string
-	err              error
+	filePickerPath            string
+	filePickerShowHidden      bool
+	externalEditTarget        string
+	currentUser               string
+	currentUserID             int
+	activeProfile             string
+	err                       error
 }
 
 type teamsMsg []clickup.Team
@@ -605,10 +608,10 @@ type listDeletedMsg struct {
 	Name      string
 }
 type attachmentUploadedMsg struct {
-	Task     *clickup.Task
-	Comments []clickup.Comment
+	Task      *clickup.Task
+	Comments  []clickup.Comment
 	BackState state
-	Popup    string
+	Popup     string
 }
 type statusUpdatedMsg struct {
 	Task     *clickup.Task
@@ -804,7 +807,7 @@ func updateStatusCmd(c *clickup.Client, taskID, teamID, listID, status string) t
 			return errMsg(fmt.Errorf("reloading task after status update: %w", err))
 		}
 
-		tasks, err := c.GetTasks(listID)
+		tasks, err := c.GetTasksForVisibleList(teamID, listID)
 		if err != nil {
 			return errMsg(fmt.Errorf("reloading list after status update: %w", err))
 		}
@@ -832,9 +835,9 @@ func refreshTaskDetailCmd(c *clickup.Client, taskID, teamID string, backState st
 	}
 }
 
-func fetchTasksCmd(c *clickup.Client, listID string) tea.Cmd {
+func fetchTasksCmd(c *clickup.Client, teamID, listID string) tea.Cmd {
 	return func() tea.Msg {
-		tasks, err := c.GetTasks(listID)
+		tasks, err := c.GetTasksForVisibleList(teamID, listID)
 		if err != nil {
 			return errMsg(err)
 		}
@@ -1991,10 +1994,6 @@ func (m *AppModel) applyTaskFilter(query string) {
 	defaultUser := strings.ToLower(m.cfg.ClickupUserName)
 
 	for _, t := range m.allTasks {
-		if t.Parent != nil {
-			continue // Hide subtasks from the main root list view
-		}
-
 		assignee := "unassigned"
 		if len(t.Assignees) > 0 {
 			assignee = strings.ToLower(t.Assignees[0].Username)
@@ -2242,7 +2241,7 @@ func (m *AppModel) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Batch(m.spinner.Tick, fetchListsCmd(m.client, m.selectedSpace))
 			case stateTasks:
 				m.loadingMsg = "Refreshing tasks..."
-				return m, tea.Batch(m.spinner.Tick, fetchTasksCmd(m.client, m.selectedList))
+				return m, tea.Batch(m.spinner.Tick, fetchTasksCmd(m.client, m.selectedTeam, m.selectedList))
 			}
 		case "enter", "right":
 			switch m.state {
@@ -2276,7 +2275,7 @@ func (m *AppModel) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.selectedList = i.ID
 					m.loading = true
 					m.loadingMsg = "Loading tasks..."
-					return m, tea.Batch(m.spinner.Tick, fetchTasksCmd(m.client, m.selectedList))
+					return m, tea.Batch(m.spinner.Tick, fetchTasksCmd(m.client, m.selectedTeam, m.selectedList))
 				}
 			case stateTasks:
 				if i, ok := m.activeList.SelectedItem().(taskItem); ok {
