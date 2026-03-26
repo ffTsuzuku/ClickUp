@@ -95,6 +95,61 @@ func (f filePickerItem) Description() string {
 
 func (f filePickerItem) FilterValue() string { return f.Name }
 
+func taskAssigneeNames(task clickup.Task) []string {
+	if len(task.Assignees) == 0 {
+		return nil
+	}
+
+	names := make([]string, 0, len(task.Assignees))
+	seen := make(map[string]bool, len(task.Assignees))
+	for _, assignee := range task.Assignees {
+		if assignee.Username == "" {
+			continue
+		}
+		key := strings.ToLower(assignee.Username)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		names = append(names, assignee.Username)
+	}
+	return names
+}
+
+func taskAssigneeDisplay(task clickup.Task, normalized bool) string {
+	names := taskAssigneeNames(task)
+	if len(names) == 0 {
+		return "unassigned"
+	}
+	if normalized {
+		for i := range names {
+			names[i] = strings.ToLower(names[i])
+		}
+	}
+	return strings.Join(names, ", ")
+}
+
+func taskMatchesAssignee(task clickup.Task, term string) bool {
+	term = normalizeSearchValue(term)
+	if term == "" {
+		return true
+	}
+
+	names := taskAssigneeNames(task)
+	if len(names) == 0 {
+		return strings.Contains("unassigned", term) || fuzzyMatch(term, "unassigned")
+	}
+
+	for _, name := range names {
+		normalizedName := normalizeSearchValue(name)
+		if strings.Contains(normalizedName, term) || fuzzyMatch(term, normalizedName) {
+			return true
+		}
+	}
+
+	return false
+}
+
 type taskItem clickup.Task
 
 func (t taskItem) Title() string {
@@ -108,10 +163,7 @@ func (t taskItem) Title() string {
 	return fmt.Sprintf("[%s] %s", id, t.Name)
 }
 func (t taskItem) Description() string {
-	assignee := "unassigned"
-	if len(t.Assignees) > 0 {
-		assignee = strings.ToLower(t.Assignees[0].Username)
-	}
+	assignee := taskAssigneeDisplay(clickup.Task(t), true)
 	pts := "0"
 	if t.Points != nil {
 		pts = fmt.Sprintf("%v", *t.Points)
@@ -139,10 +191,7 @@ func (t taskItem) Description() string {
 	return fmt.Sprintf("Status: %s | %s | PTS: %s | PRI: %s", status, assignee, pts, priority)
 }
 func (t taskItem) FilterValue() string {
-	assignee := "unassigned"
-	if len(t.Assignees) > 0 {
-		assignee = strings.ToLower(t.Assignees[0].Username)
-	}
+	assignee := taskAssigneeDisplay(clickup.Task(t), true)
 
 	title := strings.ToLower(t.Name)
 	status := strings.ToLower(t.Status.Status)
@@ -1077,10 +1126,6 @@ func parseSearchQuery(raw string) searchQuery {
 
 func matchesSearchFilters(q searchQuery, task clickup.Task) bool {
 	status := normalizeSearchValue(task.Status.Status)
-	assignee := "unassigned"
-	if len(task.Assignees) > 0 {
-		assignee = normalizeSearchValue(task.Assignees[0].Username)
-	}
 	title := normalizeSearchValue(task.Name)
 	id := normalizeSearchValue(task.ID)
 	if task.CustomID != "" {
@@ -1090,7 +1135,7 @@ func matchesSearchFilters(q searchQuery, task clickup.Task) bool {
 	if q.Status != "" && !strings.Contains(status, q.Status) && !fuzzyMatch(q.Status, status) {
 		return false
 	}
-	if q.Assignee != "" && !strings.Contains(assignee, q.Assignee) && !fuzzyMatch(q.Assignee, assignee) {
+	if q.Assignee != "" && !taskMatchesAssignee(task, q.Assignee) {
 		return false
 	}
 	if q.Title != "" && !strings.Contains(title, q.Title) && !fuzzyMatch(q.Title, title) {
@@ -1845,8 +1890,8 @@ func (m *AppModel) updateCommandSuggestions() {
 		statuses := make(map[string]bool)
 		for _, t := range m.allTasks {
 			statuses[strings.ToLower(t.Status.Status)] = true
-			if len(t.Assignees) > 0 {
-				assignees[strings.ToLower(t.Assignees[0].Username)] = true
+			for _, assignee := range taskAssigneeNames(t) {
+				assignees[strings.ToLower(assignee)] = true
 			}
 		}
 		for a := range assignees {
@@ -1994,14 +2039,9 @@ func (m *AppModel) applyTaskFilter(query string) {
 	defaultUser := strings.ToLower(m.cfg.ClickupUserName)
 
 	for _, t := range m.allTasks {
-		assignee := "unassigned"
-		if len(t.Assignees) > 0 {
-			assignee = strings.ToLower(t.Assignees[0].Username)
-		}
-
 		// If a default user is set, heavily prioritize it unless an explicit assignee override is typed
 		if defaultUser != "" && !strings.HasPrefix(query, "assignee ") && defaultUser != "clear" {
-			if !strings.Contains(assignee, defaultUser) && !fuzzyMatch(defaultUser, assignee) {
+			if !taskMatchesAssignee(t, defaultUser) {
 				continue
 			}
 		}
@@ -2025,7 +2065,7 @@ func (m *AppModel) applyTaskFilter(query string) {
 
 		if strings.HasPrefix(query, "assignee ") {
 			term := strings.TrimPrefix(query, "assignee ")
-			if fuzzyMatch(term, assignee) {
+			if taskMatchesAssignee(t, term) {
 				items = append(items, taskItem(t))
 			}
 		} else if strings.HasPrefix(query, "status ") {
@@ -2044,7 +2084,7 @@ func (m *AppModel) applyTaskFilter(query string) {
 				items = append(items, taskItem(t))
 			}
 		} else {
-			if fuzzyMatch(query, title) || fuzzyMatch(query, assignee) || fuzzyMatch(query, status) || fuzzyMatch(query, idLower) {
+			if fuzzyMatch(query, title) || taskMatchesAssignee(t, query) || fuzzyMatch(query, status) || fuzzyMatch(query, idLower) {
 				items = append(items, taskItem(t))
 				if t.Points != nil {
 					totalPoints += *t.Points
@@ -3496,9 +3536,9 @@ func (m *AppModel) updateViewportContent() {
 	b.WriteString(divider + "\n\n")
 
 	// Metadata
-	assignee := "Unassigned"
-	if len(m.selectedTask.Assignees) > 0 {
-		assignee = m.selectedTask.Assignees[0].Username
+	assignee := taskAssigneeDisplay(m.selectedTask, false)
+	if assignee == "unassigned" {
+		assignee = "Unassigned"
 	}
 
 	priority := "None"
@@ -3521,7 +3561,7 @@ func (m *AppModel) updateViewportContent() {
 		creator = m.selectedTask.Creator.Username
 	}
 
-	b.WriteString(LabelStyle.Width(15).Render("Assignee:") + assignee + "\n")
+	b.WriteString(LabelStyle.Width(15).Render("Assignees:") + assignee + "\n")
 	b.WriteString(LabelStyle.Width(15).Render("Created:") + formatClickUpTimestamp(m.selectedTask.DateCreated) + "\n")
 	b.WriteString(LabelStyle.Width(15).Render("Created By:") + creator + "\n")
 	b.WriteString(LabelStyle.Width(15).Render("Priority:") + priority + "\n")
@@ -3559,10 +3599,7 @@ func (m *AppModel) updateViewportContent() {
 				sid = t.CustomID
 			}
 
-			assignee := "unassigned"
-			if len(t.Assignees) > 0 {
-				assignee = strings.ToLower(t.Assignees[0].Username)
-			}
+			assignee := taskAssigneeDisplay(t, true)
 			pts := "0"
 			if t.Points != nil {
 				pts = fmt.Sprintf("%v", *t.Points)
