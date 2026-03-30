@@ -147,7 +147,7 @@ checklistViewItems       []checklistViewItem
 checklistSelectedIdx     int
 checklistEditingItem     *checklistViewItem
 checklistEditInput       textinput.Model
-checklistPendingDelete   clickup.Checklist
+checklistPendingDelete  string // checklist ID
 checklistEditOriginal    string
 ```
 
@@ -375,10 +375,17 @@ Add after `renderChecklistView()`:
 
 ```go
 func (m *AppModel) renderConfirmChecklistDelete() string {
+	var checklistName string
+	for _, cl := range m.selectedTask.Checklists {
+		if cl.ID == m.checklistPendingDelete {
+			checklistName = cl.Name
+			break
+		}
+	}
 	var b strings.Builder
 	b.WriteString(TitleStyle.Render("Delete Checklist?"))
 	b.WriteString("\n\n")
-	b.WriteString(fmt.Sprintf("Delete '%s' and all its items?", m.checklistPendingDelete.Name))
+	b.WriteString(fmt.Sprintf("Delete '%s' and all its items?", checklistName))
 	b.WriteString("\n\n")
 	b.WriteString(lipgloss.NewStyle().Foreground(ColorPrimary).Render("[y] Delete  "))
 	b.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext).Render("[n] Cancel"))
@@ -549,7 +556,7 @@ func (m *AppModel) updateChecklist(msg tea.Msg) (tea.Model, tea.Cmd) {
 						return checklistItemUpdatedMsg{}
 					})
 				} else {
-					m.checklistPendingDelete = item.checklist
+					m.checklistPendingDelete = item.checklist.ID
 					m.state = stateConfirmChecklistDelete
 					return m, nil
 				}
@@ -561,7 +568,7 @@ func (m *AppModel) updateChecklist(msg tea.Msg) (tea.Model, tea.Cmd) {
 				item := m.checklistViewItems[m.checklistSelectedIdx]
 				if item.itemType == checklistTypeHeader {
 					if s == "D" {
-						m.checklistPendingDelete = item.checklist
+						m.checklistPendingDelete = item.checklist.ID
 						m.state = stateConfirmChecklistDelete
 						return m, nil
 					}
@@ -581,7 +588,7 @@ func (m *AppModel) updateChecklist(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.checklistEditInput.Focus()
 			m.checklistEditInput.SetCursor(0)
 			m.checklistEditingItem = nil
-			m.checklistPendingDelete = clickup.Checklist{}
+			m.checklistPendingDelete = ""
 			return m, tea.Batch(textinput.Blink, func() tea.Msg {
 				return checklistCreatedMsg{}
 			})
@@ -604,18 +611,18 @@ func (m *AppModel) updateConfirmChecklistDelete(msg tea.Msg) (tea.Model, tea.Cmd
 	case tea.KeyMsg:
 		switch strings.ToLower(msg.String()) {
 		case "y":
-			checklist := m.checklistPendingDelete
-			m.checklistPendingDelete = clickup.Checklist{}
+			checklistID := m.checklistPendingDelete
+			m.checklistPendingDelete = ""
 			m.loading = true
 			m.loadingMsg = "Deleting checklist..."
 			return m, tea.Batch(m.spinner.Tick, func() tea.Msg {
-				if err := m.client.DeleteChecklist(checklist.ID); err != nil {
+				if err := m.client.DeleteChecklist(checklistID); err != nil {
 					return errMsg(err)
 				}
 				return checklistDeletedMsg{}
 			})
 		case "n", "esc", "q":
-			m.checklistPendingDelete = clickup.Checklist{}
+			m.checklistPendingDelete = ""
 			m.state = stateChecklist
 			return m, nil
 		}

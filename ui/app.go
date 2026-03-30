@@ -632,7 +632,7 @@ type AppModel struct {
 	checklistSelectedIdx   int
 	checklistEditingItem   *checklistViewItem
 	checklistEditInput     textinput.Model
-	checklistPendingDelete clickup.Checklist
+	checklistPendingDelete string
 	checklistEditOriginal  string
 
 	currentUser   string
