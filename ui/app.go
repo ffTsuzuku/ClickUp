@@ -1785,6 +1785,44 @@ func (m *AppModel) getSubtasks(parentID string) []clickup.Task {
 	return res
 }
 
+func (m *AppModel) flattenChecklists() {
+	m.checklistViewItems = nil
+	for _, cl := range m.selectedTask.Checklists {
+		m.checklistViewItems = append(m.checklistViewItems, checklistViewItem{
+			itemType:  checklistTypeHeader,
+			checklist: cl,
+		})
+		for i, item := range cl.Items {
+			m.checklistViewItems = append(m.checklistViewItems, checklistViewItem{
+				itemType:  checklistTypeItem,
+				checklist: cl,
+				item:      item,
+				itemIndex: i,
+			})
+		}
+	}
+	if m.checklistSelectedIdx >= len(m.checklistViewItems) {
+		m.checklistSelectedIdx = 0
+	}
+	if m.checklistSelectedIdx < 0 {
+		m.checklistSelectedIdx = 0
+	}
+}
+
+func (m *AppModel) isEditingChecklistItem() bool {
+	return m.checklistEditingItem != nil
+}
+
+func (m *AppModel) getChecklistEditOriginal() string {
+	if m.checklistEditingItem == nil {
+		return ""
+	}
+	if m.checklistEditingItem.itemType == checklistTypeHeader {
+		return m.checklistEditingItem.checklist.Name
+	}
+	return m.checklistEditingItem.item.Name
+}
+
 func (m *AppModel) editableDescription() string {
 	if m.selectedTask.MarkdownDescription != "" {
 		return m.selectedTask.MarkdownDescription
