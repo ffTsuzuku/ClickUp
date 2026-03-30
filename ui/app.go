@@ -1906,6 +1906,81 @@ func (m *AppModel) renderEditDesc() string {
 	return header + "\n\n" + lipgloss.JoinHorizontal(lipgloss.Top, left, strings.Repeat(" ", paneGap), right) + "\n" + hint
 }
 
+func (m *AppModel) renderChecklistView() string {
+	var b strings.Builder
+
+	if len(m.selectedTask.Checklists) == 0 {
+		b.WriteString(TitleStyle.Render("Checklists"))
+		b.WriteString("\n\n")
+		b.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext).Render("No checklists. Press 'n' to create one."))
+		b.WriteString("\n\n")
+		b.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext).Italic(true).Render("Press L or Esc to go back"))
+		return b.String()
+	}
+
+	b.WriteString(TitleStyle.Render("Checklists"))
+	b.WriteString("\n\n")
+
+	indent := "  "
+	checkboxUnchecked := lipgloss.NewStyle().Foreground(ColorPrimary).Render("[ ]")
+	checkboxChecked := lipgloss.NewStyle().Foreground(ColorSecondary).Render("[x]")
+
+	for idx, viewItem := range m.checklistViewItems {
+		isSelected := idx == m.checklistSelectedIdx
+
+		if viewItem.itemType == checklistTypeHeader {
+			prefix := indent + "● "
+			line := prefix + viewItem.checklist.Name
+			if isSelected {
+				line = ChecklistSelectedStyle.Render(">" + line[1:])
+			} else {
+				line = ChecklistHeaderStyle.Render(line)
+			}
+			b.WriteString(line)
+			b.WriteString("\n")
+		} else {
+			checkbox := checkboxUnchecked
+			itemStyle := ChecklistItemStyle
+			if viewItem.item.Resolved {
+				checkbox = checkboxChecked
+				itemStyle = ChecklistItemResolvedStyle
+			}
+			line := fmt.Sprintf("%s%d. %s %s", indent, viewItem.itemIndex+1, checkbox, viewItem.item.Name)
+			if isSelected {
+				b.WriteString(ChecklistSelectedStyle.Render(line))
+			} else {
+				b.WriteString(itemStyle.Render(line))
+			}
+			b.WriteString("\n")
+		}
+	}
+
+	b.WriteString("\n")
+	b.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext).Italic(true).Render("↑↓ Navigate | Space Toggle | a Add | r Rename | d Delete | n New checklist | Esc Back"))
+
+	return b.String()
+}
+
+func (m *AppModel) renderConfirmChecklistDelete() string {
+	var b strings.Builder
+	b.WriteString(TitleStyle.Render("Delete Checklist?"))
+	b.WriteString("\n\n")
+
+	checklistName := "this checklist"
+	for _, cl := range m.selectedTask.Checklists {
+		if cl.ID == m.checklistPendingDelete {
+			checklistName = cl.Name
+			break
+		}
+	}
+
+	b.WriteString(fmt.Sprintf("Delete '%s' and all its items?", checklistName))
+	b.WriteString("\n\n")
+	b.WriteString(lipgloss.NewStyle().Foreground(ColorPrimary).Render("[y] Delete  "))
+	b.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext).Render("[n] Cancel"))
+	return b.String()
+}
+
 func (m *AppModel) filterSuggestions() {
 	v := strings.ToLower(m.cmdInput.Value())
 	words := strings.Split(v, " ")
