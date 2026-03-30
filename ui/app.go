@@ -2644,6 +2644,16 @@ func (m *AppModel) updateDetail(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.loading = true
 			m.loadingMsg = "Refreshing task..."
 			return m, tea.Batch(m.spinner.Tick, fetchTaskCmd(m.client, m.selectedTask.ID, m.selectedTeam, m.prevState))
+		case "L":
+			if len(m.selectedTask.Checklists) > 0 {
+				m.flattenChecklists()
+				m.checklistSelectedIdx = 0
+				m.checklistEditingItem = nil
+				m.state = stateChecklist
+				return m, nil
+			}
+			m.popupMsg = "No checklists on this task. Press 'n' from command mode to create one."
+			return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
 		}
 	}
 	var cmd tea.Cmd
@@ -4546,6 +4556,10 @@ func (m *AppModel) View() string {
 		} else {
 			mainContent = m.activeList.View()
 		}
+	case stateChecklist:
+		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, m.renderChecklistView()+"\n\n"+m.checklistEditInput.View())
+	case stateConfirmChecklistDelete:
+		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, m.renderConfirmChecklistDelete())
 	}
 
 	var sb strings.Builder
