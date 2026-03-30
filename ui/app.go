@@ -278,6 +278,10 @@ func (m *AppModel) stateLabel() string {
 		return "Confirm Discard Description"
 	case stateFilePicker:
 		return "Attachment File Picker"
+	case stateChecklist:
+		return "Checklists"
+	case stateConfirmChecklistDelete:
+		return "Confirm Delete Checklist"
 	default:
 		return "Unknown"
 	}
@@ -353,6 +357,11 @@ func newBaseModel(cfg *config.Config) *AppModel {
 	ti.Placeholder = "Task name..."
 	ti.CharLimit = 200
 
+	clEdit := textinput.New()
+	clEdit.Placeholder = "Item name..."
+	clEdit.CharLimit = 200
+	clEdit.Prompt = "  > "
+
 	da := textarea.New()
 	da.Placeholder = "Enter description..."
 	da.CharLimit = 5000
@@ -372,26 +381,30 @@ func newBaseModel(cfg *config.Config) *AppModel {
 	s.Style = lipgloss.NewStyle().Foreground(ColorPrimary)
 
 	m := &AppModel{
-		state:         stateTeams,
-		prevState:     stateTeams,
-		cfg:           cfg,
-		client:        clickup.NewClient(cfg.ClickupAPIKey),
-		teamsList:     teamsList,
-		spacesList:    spacesList,
-		listsList:     listsList,
-		tasksList:     tasksList,
-		searchList:    searchList,
-		fileList:      fileList,
-		commentInput:  ci,
-		taskInput:     ti,
-		descInput:     da,
-		cmdInput:      cmd,
-		vp:            vp,
-		renderer:      r,
-		spinner:       s,
-		currentUser:   "Unauthenticated",
-		currentUserID: 0,
-		activeProfile: cfg.ActiveProfileName(),
+		state:                stateTeams,
+		prevState:            stateTeams,
+		cfg:                  cfg,
+		client:               clickup.NewClient(cfg.ClickupAPIKey),
+		teamsList:            teamsList,
+		spacesList:           spacesList,
+		listsList:            listsList,
+		tasksList:            tasksList,
+		searchList:           searchList,
+		fileList:             fileList,
+		commentInput:         ci,
+		taskInput:            ti,
+		descInput:            da,
+		cmdInput:             cmd,
+		vp:                   vp,
+		renderer:             r,
+		spinner:              s,
+		checklistViewItems:   nil,
+		checklistSelectedIdx: 0,
+		checklistEditingItem: nil,
+		checklistEditInput:   clEdit,
+		currentUser:          "Unauthenticated",
+		currentUserID:        0,
+		activeProfile:        cfg.ActiveProfileName(),
 	}
 	m.activeList = &m.teamsList
 	return m
@@ -613,10 +626,19 @@ type AppModel struct {
 	filePickerPath            string
 	filePickerShowHidden      bool
 	externalEditTarget        string
-	currentUser               string
-	currentUserID             int
-	activeProfile             string
-	err                       error
+
+	// Checklist view state
+	checklistViewItems     []checklistViewItem
+	checklistSelectedIdx   int
+	checklistEditingItem   *checklistViewItem
+	checklistEditInput     textinput.Model
+	checklistPendingDelete clickup.Checklist
+	checklistEditOriginal  string
+
+	currentUser   string
+	currentUserID int
+	activeProfile string
+	err           error
 }
 
 type teamsMsg []clickup.Team
