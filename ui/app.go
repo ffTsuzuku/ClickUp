@@ -46,6 +46,8 @@ const (
 	stateConfirmListDelete
 	stateConfirmDiscardDesc
 	stateFilePicker
+	stateChecklist
+	stateConfirmChecklistDelete
 )
 
 // Item Wrappers
@@ -94,6 +96,24 @@ func (f filePickerItem) Description() string {
 }
 
 func (f filePickerItem) FilterValue() string { return f.Name }
+
+type checklistItemType int
+
+const (
+	checklistTypeHeader checklistItemType = iota
+	checklistTypeItem
+)
+
+type checklistViewItem struct {
+	itemType  checklistItemType
+	checklist clickup.Checklist
+	item      clickup.ChecklistItem
+	itemIndex int
+}
+
+type checklistDeleteConfirmMsg struct {
+	Checklist clickup.Checklist
+}
 
 func taskAssigneeNames(task clickup.Task) []string {
 	if len(task.Assignees) == 0 {
@@ -677,6 +697,9 @@ type searchResultsMsg struct {
 	Query string
 	Tasks []clickup.Task
 }
+type checklistItemUpdatedMsg struct{}
+type checklistCreatedMsg struct{}
+type checklistDeletedMsg struct{}
 
 type searchQuery struct {
 	Raw      string
