@@ -1732,6 +1732,53 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		msg.Model.popupMsg = msg.Popup
 		*m = *msg.Model
 		return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+	case checklistItemUpdatedMsg:
+		m.loading = false
+		return m, tea.Batch(
+			fetchTaskCmd(m.client, m.selectedTask.ID, m.selectedTeam, m.detailBackState),
+		)
+
+	case checklistCreatedMsg:
+		m.loading = false
+		if m.checklistEditingItem == nil && m.checklistEditInput.Value() != "" {
+			name := strings.TrimSpace(m.checklistEditInput.Value())
+			m.checklistEditInput.SetValue("")
+			m.checklistEditInput.Blur()
+			if name != "" {
+				m.loading = true
+				m.loadingMsg = "Creating checklist..."
+				return m, tea.Batch(m.spinner.Tick, func() tea.Msg {
+					if err := m.client.CreateChecklist(m.selectedTask.ID, name); err != nil {
+						return errMsg(err)
+					}
+					return checklistItemUpdatedMsg{}
+				})
+			}
+		} else if m.checklistEditingItem != nil && m.checklistEditInput.Value() != "" {
+			newValue := strings.TrimSpace(m.checklistEditInput.Value())
+			m.checklistEditInput.SetValue("")
+			m.checklistEditInput.Blur()
+			if newValue != "" {
+				item := *m.checklistEditingItem
+				m.checklistEditingItem = nil
+				m.loading = true
+				m.loadingMsg = "Adding item..."
+				return m, tea.Batch(m.spinner.Tick, func() tea.Msg {
+					if err := m.client.CreateChecklistItem(item.checklist.ID, newValue); err != nil {
+						return errMsg(err)
+					}
+					return checklistItemUpdatedMsg{}
+				})
+			}
+		}
+		m.checklistEditingItem = nil
+		return m, nil
+
+	case checklistDeletedMsg:
+		m.loading = false
+		return m, tea.Batch(
+			fetchTaskCmd(m.client, m.selectedTask.ID, m.selectedTeam, m.detailBackState),
+		)
 	}
 
 	if m.loading {
@@ -1770,6 +1817,10 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateConfirmListDelete(msg)
 	case stateConfirmDiscardDesc:
 		return m.updateConfirmDiscardDesc(msg)
+	case stateChecklist:
+		return m.updateChecklist(msg)
+	case stateConfirmChecklistDelete:
+		return m.updateConfirmChecklistDelete(msg)
 	}
 
 	return m, tea.Batch(cmds...)
@@ -2909,6 +2960,208 @@ func (m *AppModel) updateConfirmDiscardDesc(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.state = stateEditDesc
 			m.descInput.Focus()
 			return m, textarea.Blink
+		}
+	}
+	return m, nil
+}
+
+func (m *AppModel) updateChecklist(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		s := msg.String()
+
+		if m.isEditingChecklistItem() {
+			switch msg.Type {
+			case tea.KeyEnter:
+				newValue := strings.TrimSpace(m.checklistEditInput.Value())
+				original := m.getChecklistEditOriginal()
+				editingItem := m.checklistEditingItem
+				m.checklistEditInput.SetValue("")
+				m.checklistEditInput.Blur()
+				m.checklistEditingItem = nil
+
+				if newValue != "" && newValue != original && editingItem != nil {
+					m.loading = true
+					m.loadingMsg = "Updating..."
+					if editingItem.itemType == checklistTypeHeader {
+						checklist := editingItem.checklist
+						return m, tea.Batch(m.spinner.Tick, func() tea.Msg {
+							if err := m.client.UpdateChecklist(checklist.ID, newValue); err != nil {
+								return errMsg(err)
+							}
+							return checklistItemUpdatedMsg{}
+						})
+					} else {
+						item := editingItem.item
+						checklist := editingItem.checklist
+						return m, tea.Batch(m.spinner.Tick, func() tea.Msg {
+							if err := m.client.UpdateChecklistItem(checklist.ID, item.ID, newValue, item.Resolved); err != nil {
+								return errMsg(err)
+							}
+							return checklistItemUpdatedMsg{}
+						})
+					}
+				}
+				return m, nil
+
+			case tea.KeyEsc:
+				m.checklistEditInput.SetValue("")
+				m.checklistEditInput.Blur()
+				m.checklistEditingItem = nil
+				return m, nil
+			}
+
+			var cmd tea.Cmd
+			m.checklistEditInput, cmd = m.checklistEditInput.Update(msg)
+			return m, cmd
+		}
+
+		switch s {
+		case "esc", "q":
+			m.checklistViewItems = nil
+			m.checklistSelectedIdx = 0
+			m.state = stateTaskDetail
+			m.updateViewportContent()
+			return m, nil
+
+		case "up", "k":
+			if m.checklistSelectedIdx > 0 {
+				m.checklistSelectedIdx--
+			}
+			return m, nil
+
+		case "down", "j":
+			if m.checklistSelectedIdx < len(m.checklistViewItems)-1 {
+				m.checklistSelectedIdx++
+			}
+			return m, nil
+
+		case " ":
+			if m.checklistSelectedIdx < len(m.checklistViewItems) {
+				item := m.checklistViewItems[m.checklistSelectedIdx]
+				if item.itemType == checklistTypeItem {
+					m.loading = true
+					m.loadingMsg = "Toggling..."
+					checklist := item.checklist
+					return m, tea.Batch(m.spinner.Tick, func() tea.Msg {
+						if err := m.client.UpdateChecklistItem(checklist.ID, item.item.ID, item.item.Name, !item.item.Resolved); err != nil {
+							return errMsg(err)
+						}
+						return checklistItemUpdatedMsg{}
+					})
+				}
+			}
+			return m, nil
+
+		case "enter", "e":
+			if m.checklistSelectedIdx < len(m.checklistViewItems) {
+				m.checklistEditingItem = &m.checklistViewItems[m.checklistSelectedIdx]
+				m.checklistEditInput.SetValue(m.getChecklistEditOriginal())
+				m.checklistEditInput.Focus()
+				m.checklistEditInput.SetCursor(len(m.checklistEditInput.Value()))
+				return m, textinput.Blink
+			}
+			return m, nil
+
+		case "a":
+			if m.checklistSelectedIdx < len(m.checklistViewItems) {
+				m.checklistEditingItem = &m.checklistViewItems[m.checklistSelectedIdx]
+				m.checklistEditInput.SetValue("")
+				m.checklistEditInput.Placeholder = "New item name..."
+				m.checklistEditInput.Focus()
+				m.checklistEditInput.SetCursor(0)
+				return m, textinput.Blink
+			}
+			return m, nil
+
+		case "r":
+			if m.checklistSelectedIdx < len(m.checklistViewItems) {
+				m.checklistEditingItem = &m.checklistViewItems[m.checklistSelectedIdx]
+				m.checklistEditInput.SetValue(m.getChecklistEditOriginal())
+				m.checklistEditInput.Placeholder = "Name..."
+				m.checklistEditInput.Focus()
+				m.checklistEditInput.SetCursor(len(m.checklistEditInput.Value()))
+				return m, textinput.Blink
+			}
+			return m, nil
+
+		case "d":
+			if m.checklistSelectedIdx < len(m.checklistViewItems) {
+				item := m.checklistViewItems[m.checklistSelectedIdx]
+				if item.itemType == checklistTypeItem {
+					m.loading = true
+					m.loadingMsg = "Deleting item..."
+					checklist := item.checklist
+					return m, tea.Batch(m.spinner.Tick, func() tea.Msg {
+						if err := m.client.DeleteChecklistItem(checklist.ID, item.item.ID); err != nil {
+							return errMsg(err)
+						}
+						return checklistItemUpdatedMsg{}
+					})
+				} else {
+					m.checklistPendingDelete = item.checklist.ID
+					m.state = stateConfirmChecklistDelete
+					return m, nil
+				}
+			}
+			return m, nil
+
+		case "R", "D":
+			if m.checklistSelectedIdx < len(m.checklistViewItems) {
+				item := m.checklistViewItems[m.checklistSelectedIdx]
+				if item.itemType == checklistTypeHeader {
+					if s == "D" {
+						m.checklistPendingDelete = item.checklist.ID
+						m.state = stateConfirmChecklistDelete
+						return m, nil
+					}
+					m.checklistEditingItem = &m.checklistViewItems[m.checklistSelectedIdx]
+					m.checklistEditInput.SetValue(item.checklist.Name)
+					m.checklistEditInput.Placeholder = "Checklist name..."
+					m.checklistEditInput.Focus()
+					m.checklistEditInput.SetCursor(len(m.checklistEditInput.Value()))
+					return m, textinput.Blink
+				}
+			}
+			return m, nil
+
+		case "n":
+			m.checklistEditInput.SetValue("")
+			m.checklistEditInput.Placeholder = "New checklist name..."
+			m.checklistEditInput.Focus()
+			m.checklistEditInput.SetCursor(0)
+			m.checklistEditingItem = nil
+			m.checklistPendingDelete = ""
+			return m, tea.Batch(textinput.Blink, func() tea.Msg {
+				return checklistCreatedMsg{}
+			})
+		}
+	}
+
+	var cmd tea.Cmd
+	m.checklistEditInput, cmd = m.checklistEditInput.Update(msg)
+	return m, cmd
+}
+
+func (m *AppModel) updateConfirmChecklistDelete(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch strings.ToLower(msg.String()) {
+		case "y":
+			checklistID := m.checklistPendingDelete
+			m.checklistPendingDelete = ""
+			m.loading = true
+			m.loadingMsg = "Deleting checklist..."
+			return m, tea.Batch(m.spinner.Tick, func() tea.Msg {
+				if err := m.client.DeleteChecklist(checklistID); err != nil {
+					return errMsg(err)
+				}
+				return checklistDeletedMsg{}
+			})
+		case "n", "esc", "q":
+			m.checklistPendingDelete = ""
+			m.state = stateChecklist
+			return m, nil
 		}
 	}
 	return m, nil
