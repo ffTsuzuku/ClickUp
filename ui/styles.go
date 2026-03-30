@@ -16,10 +16,10 @@ var (
 			Padding(1, 2)
 
 	HeaderInsetStyle = lipgloss.NewStyle().
-			PaddingLeft(2)
+				PaddingLeft(2)
 
 	HeaderBannerStyle = lipgloss.NewStyle().
-			MarginTop(1)
+				MarginTop(1)
 
 	TitleStyle = lipgloss.NewStyle().
 			Foreground(ColorPrimary).
@@ -37,12 +37,30 @@ var (
 			BorderForeground(ColorBorder).
 			Padding(1, 2)
 
-	StatusTodoStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#8b949e"))
+	StatusTodoStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("#8b949e"))
 	StatusInProgressStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#f1e05a"))
-	StatusDoneStyle = lipgloss.NewStyle().Foreground(ColorSecondary)
-	ColorSecondaryStyle = lipgloss.NewStyle().Foreground(ColorSecondary).Bold(true)
-	
+	StatusDoneStyle       = lipgloss.NewStyle().Foreground(ColorSecondary)
+	ColorSecondaryStyle   = lipgloss.NewStyle().Foreground(ColorSecondary).Bold(true)
+
 	SectionHeaderStyle = lipgloss.NewStyle().Foreground(ColorPrimary).Bold(true)
 	LabelStyle         = lipgloss.NewStyle().Foreground(ColorSubtext)
 	BreadcrumbStyle    = lipgloss.NewStyle().Foreground(ColorSubtext).Bold(true)
+
+	ChecklistHeaderStyle = lipgloss.NewStyle().
+				Foreground(ColorPrimary).
+				Bold(true)
+
+	ChecklistItemStyle = lipgloss.NewStyle().
+				Foreground(ColorText)
+
+	ChecklistItemResolvedStyle = lipgloss.NewStyle().
+					Foreground(ColorSubtext).
+					Strikethrough(true)
+
+	ChecklistCheckboxStyle = lipgloss.NewStyle().
+				Foreground(ColorPrimary)
+
+	ChecklistSelectedStyle = lipgloss.NewStyle().
+				Background(ColorBorder).
+				Foreground(ColorText)
 )
