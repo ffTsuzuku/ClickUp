@@ -1473,10 +1473,14 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		m.selectedComments = msg.Comments
 
-		if m.state != stateTaskDetail {
+		// If we were in checklist mode, stay there and refresh the flattened items
+		if m.state == stateChecklist {
+			m.flattenChecklists()
+		} else if m.state != stateTaskDetail {
 			m.taskHistory = nil
+			m.state = stateTaskDetail
 		}
-		m.state = stateTaskDetail
+
 		m.prevState = msg.BackState
 		m.updateViewportContent()
 		return m, nil
