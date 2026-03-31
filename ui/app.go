@@ -4560,7 +4560,7 @@ func (m *AppModel) View() string {
 			mainContent = m.activeList.View()
 		}
 	case stateChecklist:
-		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, m.renderChecklistView()+"\n\n"+m.checklistEditInput.View())
+		return lipgloss.Place(m.width, m.height, lipgloss.Left, lipgloss.Top, m.renderChecklistView()+"\n\n"+m.checklistEditInput.View())
 	case stateConfirmChecklistDelete:
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, m.renderConfirmChecklistDelete())
 	}
