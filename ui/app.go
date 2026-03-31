@@ -3129,7 +3129,6 @@ func (m *AppModel) updateChecklist(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.checklistEditInput.Placeholder = "New checklist name..."
 			m.checklistEditInput.Focus()
 			m.checklistEditInput.SetCursor(0)
-			m.checklistPendingCreate = ""
 			m.checklistPendingDelete = ""
 			return m, textinput.Blink
 		}
