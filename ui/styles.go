@@ -45,4 +45,22 @@ var (
 	SectionHeaderStyle = lipgloss.NewStyle().Foreground(ColorPrimary).Bold(true)
 	LabelStyle         = lipgloss.NewStyle().Foreground(ColorSubtext)
 	BreadcrumbStyle    = lipgloss.NewStyle().Foreground(ColorSubtext).Bold(true)
+
+	ChecklistHeaderStyle = lipgloss.NewStyle().
+		Foreground(ColorPrimary).
+		Bold(true)
+
+	ChecklistItemStyle = lipgloss.NewStyle().
+		Foreground(ColorText)
+
+	ChecklistItemResolvedStyle = lipgloss.NewStyle().
+		Foreground(ColorSubtext).
+		Strikethrough(true)
+
+	ChecklistCheckboxStyle = lipgloss.NewStyle().
+		Foreground(ColorPrimary)
+
+	ChecklistSelectedStyle = lipgloss.NewStyle().
+		Background(ColorBorder).
+		Foreground(ColorText)
 )

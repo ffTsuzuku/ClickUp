@@ -46,6 +46,8 @@ const (
 	stateConfirmListDelete
 	stateConfirmDiscardDesc
 	stateFilePicker
+	stateChecklist
+	stateConfirmChecklistDelete
 )
 
 // Item Wrappers
@@ -94,6 +96,24 @@ func (f filePickerItem) Description() string {
 }
 
 func (f filePickerItem) FilterValue() string { return f.Name }
+
+type checklistItemType int
+
+const (
+	checklistTypeHeader checklistItemType = iota
+	checklistTypeItem
+)
+
+type checklistViewItem struct {
+	itemType   checklistItemType
+	checklist  clickup.Checklist
+	item       clickup.ChecklistItem
+	itemIndex  int
+}
+
+type checklistDeleteConfirmMsg struct {
+	Checklist clickup.Checklist
+}
 
 func taskAssigneeNames(task clickup.Task) []string {
 	if len(task.Assignees) == 0 {
@@ -258,6 +278,10 @@ func (m *AppModel) stateLabel() string {
 		return "Confirm Discard Description"
 	case stateFilePicker:
 		return "Attachment File Picker"
+	case stateChecklist:
+		return "Checklists"
+	case stateConfirmChecklistDelete:
+		return "Confirm Delete Checklist"
 	default:
 		return "Unknown"
 	}
@@ -323,6 +347,11 @@ func newBaseModel(cfg *config.Config) *AppModel {
 	ci.SetWidth(80)
 	ci.SetHeight(5)
 
+	clEdit := textinput.New()
+	clEdit.Placeholder = "Item name..."
+	clEdit.CharLimit = 200
+	clEdit.Prompt = "  > "
+
 	cmd := textinput.New()
 	cmd.Placeholder = "Enter slash command (e.g. /filter) or /help..."
 	cmd.Prompt = lipgloss.NewStyle().Foreground(ColorPrimary).Bold(true).Render("> ")
@@ -363,6 +392,7 @@ func newBaseModel(cfg *config.Config) *AppModel {
 		searchList:    searchList,
 		fileList:      fileList,
 		commentInput:  ci,
+		checklistEditInput: clEdit,
 		taskInput:     ti,
 		descInput:     da,
 		cmdInput:      cmd,
@@ -593,6 +623,14 @@ type AppModel struct {
 	filePickerPath            string
 	filePickerShowHidden      bool
 	externalEditTarget        string
+
+	// Checklist view state
+	checklistViewItems     []checklistViewItem
+	checklistSelectedIdx   int
+	checklistEditingItem   *checklistViewItem
+	checklistEditInput     textinput.Model
+	checklistPendingDelete clickup.Checklist
+	checklistEditOriginal  string
 	currentUser               string
 	currentUserID             int
 	activeProfile             string
@@ -669,6 +707,9 @@ type statusUpdatedMsg struct {
 }
 type teamMembersMsg []clickup.Member
 type commentAddedMsg struct{}
+type checklistItemUpdatedMsg struct{}
+type checklistCreatedMsg struct{}
+type checklistDeletedMsg struct{}
 type editorFinishedMsg struct {
 	content string
 	err     error
@@ -1639,6 +1680,18 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			fetchCommentsCmd(m.client, m.selectedTask.ID),
 			tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} }),
 		)
+
+	case checklistItemUpdatedMsg:
+		m.loading = false
+		return m, tea.Batch(
+			fetchTaskCmd(m.client, m.selectedTask.ID, m.selectedTeam, m.detailBackState),
+		)
+
+	case checklistDeletedMsg:
+		m.loading = false
+		return m, tea.Batch(
+			fetchTaskCmd(m.client, m.selectedTask.ID, m.selectedTeam, m.detailBackState),
+		)
 	case commentsMsg:
 		m.loading = false
 		m.selectedComments = msg
@@ -1719,6 +1772,10 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateCreateSubtask(msg)
 	case stateEditComment:
 		return m.updateEditComment(msg)
+	case stateChecklist:
+		return m.updateChecklist(msg)
+	case stateConfirmChecklistDelete:
+		return m.updateConfirmChecklistDelete(msg)
 	case stateConfirmProfileDelete:
 		return m.updateConfirmProfileDelete(msg)
 	case stateConfirmListDelete:
@@ -1738,6 +1795,44 @@ func (m *AppModel) getSubtasks(parentID string) []clickup.Task {
 		}
 	}
 	return res
+}
+
+func (m *AppModel) flattenChecklists() {
+	m.checklistViewItems = nil
+	for _, cl := range m.selectedTask.Checklists {
+		m.checklistViewItems = append(m.checklistViewItems, checklistViewItem{
+			itemType: checklistTypeHeader,
+			checklist: cl,
+		})
+		for i, item := range cl.Items {
+			m.checklistViewItems = append(m.checklistViewItems, checklistViewItem{
+				itemType:  checklistTypeItem,
+				checklist: cl,
+				item:      item,
+				itemIndex: i,
+			})
+		}
+	}
+	if m.checklistSelectedIdx >= len(m.checklistViewItems) {
+		m.checklistSelectedIdx = 0
+	}
+	if m.checklistSelectedIdx < 0 {
+		m.checklistSelectedIdx = 0
+	}
+}
+
+func (m *AppModel) isEditingChecklistItem() bool {
+	return m.checklistEditInput.Focused()
+}
+
+func (m *AppModel) getChecklistEditOriginal() string {
+	if m.checklistEditingItem == nil {
+		return ""
+	}
+	if m.checklistEditingItem.itemType == checklistTypeHeader {
+		return m.checklistEditingItem.checklist.Name
+	}
+	return m.checklistEditingItem.item.Name
 }
 
 func (m *AppModel) editableDescription() string {
@@ -1821,6 +1916,89 @@ func (m *AppModel) renderEditDesc() string {
 	hint := lipgloss.NewStyle().Foreground(ColorSubtext).Render("Ctrl+S to save | Esc to cancel")
 
 	return header + "\n\n" + lipgloss.JoinHorizontal(lipgloss.Top, left, strings.Repeat(" ", paneGap), right) + "\n" + hint
+}
+
+func (m *AppModel) renderChecklistView() string {
+	var b strings.Builder
+	
+	if len(m.selectedTask.Checklists) == 0 {
+		b.WriteString(TitleStyle.Render("Checklists"))
+		b.WriteString("\n\n")
+		b.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext).Render("No checklists. Press 'n' to create one."))
+		b.WriteString("\n\n")
+		b.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext).Italic(true).Render("Press L or Esc to go back"))
+		return b.String()
+	}
+	
+	b.WriteString(TitleStyle.Render("Checklists"))
+	b.WriteString("\n\n")
+	
+	indent := "  "
+	checkboxUnchecked := lipgloss.NewStyle().Foreground(ColorPrimary).Render("[ ]")
+	checkboxChecked := lipgloss.NewStyle().Foreground(ColorSecondary).Render("[x]")
+	
+	for idx, viewItem := range m.checklistViewItems {
+		isSelected := idx == m.checklistSelectedIdx
+		
+		if viewItem.itemType == checklistTypeHeader {
+			prefix := indent + "● "
+			line := prefix + viewItem.checklist.Name
+			if isSelected {
+				line = ChecklistSelectedStyle.Render(">"+line[1:])
+			} else {
+				line = ChecklistHeaderStyle.Render(line)
+			}
+			b.WriteString(line)
+			b.WriteString("\n")
+		} else {
+			checkbox := checkboxUnchecked
+			itemStyle := ChecklistItemStyle
+			if viewItem.item.Resolved {
+				checkbox = checkboxChecked
+				itemStyle = ChecklistItemResolvedStyle
+			}
+			
+			prefix := fmt.Sprintf("%s%d. ", indent, viewItem.itemIndex+1)
+			name := viewItem.item.Name
+			
+			if isSelected {
+				// Apply selected background to the whole line, but preserve strikethrough if resolved
+				textStyle := ChecklistSelectedStyle
+				if viewItem.item.Resolved {
+					textStyle = textStyle.Copy().Strikethrough(true).Foreground(ColorSubtext)
+				}
+				// The checkbox also needs the background color when selected
+				cbStyle := lipgloss.NewStyle().Background(ColorBorder).Foreground(ColorSecondary)
+				cbText := "[x]"
+				if !viewItem.item.Resolved {
+					cbStyle = lipgloss.NewStyle().Background(ColorBorder).Foreground(ColorPrimary)
+					cbText = "[ ]"
+				}
+				cbStr := cbStyle.Render(cbText)
+				
+				b.WriteString(fmt.Sprintf("%s%s %s", textStyle.Render(prefix), cbStr, textStyle.Render(name)))
+			} else {
+				b.WriteString(fmt.Sprintf("%s%s %s", itemStyle.Render(prefix), checkbox, itemStyle.Render(name)))
+			}
+			b.WriteString("\n")
+		}
+	}
+	
+	b.WriteString("\n")
+	b.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext).Italic(true).Render("↑↓ Navigate | Space Toggle | a Add | r Rename | d Delete | n New checklist | Esc Back"))
+	
+	return b.String()
+}
+
+func (m *AppModel) renderConfirmChecklistDelete() string {
+	var b strings.Builder
+	b.WriteString(TitleStyle.Render("Delete Checklist?"))
+	b.WriteString("\n\n")
+	b.WriteString(fmt.Sprintf("Delete '%s' and all its items?", m.checklistPendingDelete.Name))
+	b.WriteString("\n\n")
+	b.WriteString(lipgloss.NewStyle().Foreground(ColorPrimary).Render("[y] Delete  "))
+	b.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext).Render("[n] Cancel"))
+	return b.String()
 }
 
 func (m *AppModel) filterSuggestions() {
@@ -1912,13 +2090,8 @@ func (m *AppModel) updateCommandSuggestions() {
 		sugs = append(sugs, Suggestion{"/copydesc", "Copy the ticket description to your clipboard"})
 		sugs = append(sugs, Suggestion{"/editext", "Edit description in $EDITOR (vim etc)"})
 		sugs = append(sugs, Suggestion{"/subtask", "Add a subtask to this ticket"})
-		sugs = append(sugs, Suggestion{"/checklist add ", "Create a checklist on this ticket"})
-		sugs = append(sugs, Suggestion{"/checklist rename ", "Rename a checklist by number"})
-		sugs = append(sugs, Suggestion{"/checklist delete ", "Delete a checklist by number"})
-		sugs = append(sugs, Suggestion{"/checklist item add ", "Add an item to a checklist"})
-		sugs = append(sugs, Suggestion{"/checklist item rename ", "Rename a checklist item"})
-		sugs = append(sugs, Suggestion{"/checklist item toggle ", "Toggle a checklist item"})
-		sugs = append(sugs, Suggestion{"/checklist item delete ", "Delete a checklist item"})
+		sugs = append(sugs, Suggestion{"/checklist add ", "Create a checklist (or use 'n' in checklist view)"})
+		sugs = append(sugs, Suggestion{"L", "Open checklist view (when viewing task)"})
 		sugs = append(sugs, Suggestion{"/attach open ", "Open an attachment preview in your browser by number (e.g. /attach open 1)"})
 		sugs = append(sugs, Suggestion{"/attach download ", "Download an attachment by number (e.g. /attach download 1)"})
 		sugs = append(sugs, Suggestion{"/attach share ", "Copy an attachment URL to your clipboard by number (e.g. /attach share 1)"})
@@ -2435,6 +2608,16 @@ func (m *AppModel) updateDetail(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.loading = true
 			m.loadingMsg = "Refreshing task..."
 			return m, tea.Batch(m.spinner.Tick, fetchTaskCmd(m.client, m.selectedTask.ID, m.selectedTeam, m.prevState))
+		case "L":
+			if len(m.selectedTask.Checklists) > 0 {
+				m.flattenChecklists()
+				m.checklistSelectedIdx = 0
+				m.checklistEditingItem = nil
+				m.state = stateChecklist
+				return m, nil
+			}
+			m.popupMsg = "No checklists on this task. Press 'n' from command mode to create one."
+			return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
 		}
 	}
 	var cmd tea.Cmd
@@ -2751,6 +2934,237 @@ func (m *AppModel) updateConfirmDiscardDesc(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.state = stateEditDesc
 			m.descInput.Focus()
 			return m, textarea.Blink
+		}
+	}
+	return m, nil
+}
+
+func (m *AppModel) updateChecklist(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		s := msg.String()
+		
+		if m.isEditingChecklistItem() {
+			switch msg.Type {
+			case tea.KeyEnter:
+				newValue := strings.TrimSpace(m.checklistEditInput.Value())
+				original := m.getChecklistEditOriginal()
+				m.checklistEditInput.SetValue("")
+				m.checklistEditInput.Blur()
+				editingItem := m.checklistEditingItem
+				m.checklistEditingItem = nil
+				
+				if newValue != "" {
+					// We are creating a new checklist
+					if editingItem == nil {
+						m.loading = true
+						m.loadingMsg = "Creating checklist..."
+						return m, tea.Batch(m.spinner.Tick, func() tea.Msg {
+							if err := m.client.CreateChecklist(m.selectedTask.ID, newValue); err != nil {
+								return errMsg(err)
+							}
+							return checklistItemUpdatedMsg{}
+						})
+					}
+
+					// We are editing or adding an item
+					if m.checklistEditOriginal == "" {
+						// adding a new item
+						m.loading = true
+						m.loadingMsg = "Adding item..."
+						checklist := editingItem.checklist
+						return m, tea.Batch(m.spinner.Tick, func() tea.Msg {
+							if err := m.client.CreateChecklistItem(checklist.ID, newValue); err != nil {
+								return errMsg(err)
+							}
+							return checklistItemUpdatedMsg{}
+						})
+					} else if newValue != original {
+						// renaming item/checklist
+						m.loading = true
+						m.loadingMsg = "Updating..."
+						if m.checklistEditOriginal == editingItem.checklist.Name {
+							checklist := editingItem.checklist
+							return m, tea.Batch(m.spinner.Tick, func() tea.Msg {
+								if err := m.client.UpdateChecklist(checklist.ID, newValue); err != nil {
+									return errMsg(err)
+								}
+								return checklistItemUpdatedMsg{}
+							})
+						} else {
+							item := editingItem.item
+							checklist := editingItem.checklist
+							return m, tea.Batch(m.spinner.Tick, func() tea.Msg {
+								if err := m.client.UpdateChecklistItem(checklist.ID, item.ID, newValue, item.Resolved); err != nil {
+									return errMsg(err)
+								}
+								return checklistItemUpdatedMsg{}
+							})
+						}
+					}
+				}
+				return m, nil
+				
+			case tea.KeyEsc:
+				m.checklistEditInput.SetValue("")
+				m.checklistEditInput.Blur()
+				m.checklistEditingItem = nil
+				return m, nil
+			}
+			
+			var cmd tea.Cmd
+			m.checklistEditInput, cmd = m.checklistEditInput.Update(msg)
+			return m, cmd
+		}
+		
+		switch s {
+		case "esc", "q":
+			m.checklistViewItems = nil
+			m.checklistSelectedIdx = 0
+			m.state = stateTaskDetail
+			m.updateViewportContent()
+			return m, nil
+			
+		case "up", "k":
+			if m.checklistSelectedIdx > 0 {
+				m.checklistSelectedIdx--
+			}
+			return m, nil
+			
+		case "down", "j":
+			if m.checklistSelectedIdx < len(m.checklistViewItems)-1 {
+				m.checklistSelectedIdx++
+			}
+			return m, nil
+			
+		case " ":
+			if m.checklistSelectedIdx < len(m.checklistViewItems) {
+				item := m.checklistViewItems[m.checklistSelectedIdx]
+				if item.itemType == checklistTypeItem {
+					m.loading = true
+					m.loadingMsg = "Toggling..."
+					checklist := item.checklist
+					return m, tea.Batch(m.spinner.Tick, func() tea.Msg {
+						if err := m.client.UpdateChecklistItem(checklist.ID, item.item.ID, item.item.Name, !item.item.Resolved); err != nil {
+							return errMsg(err)
+						}
+						return checklistItemUpdatedMsg{}
+					})
+				}
+			}
+			return m, nil
+			
+		case "enter", "e":
+			if m.checklistSelectedIdx < len(m.checklistViewItems) {
+				m.checklistEditingItem = &m.checklistViewItems[m.checklistSelectedIdx]
+				m.checklistEditOriginal = m.getChecklistEditOriginal()
+				m.checklistEditInput.SetValue(m.checklistEditOriginal)
+				m.checklistEditInput.Focus()
+				m.checklistEditInput.SetCursor(len(m.checklistEditInput.Value()))
+				return m, textinput.Blink
+			}
+			return m, nil
+			
+		case "a":
+			if m.checklistSelectedIdx < len(m.checklistViewItems) {
+				m.checklistEditingItem = &m.checklistViewItems[m.checklistSelectedIdx]
+				m.checklistEditOriginal = ""
+				m.checklistEditInput.SetValue("")
+				m.checklistEditInput.Placeholder = "New item name..."
+				m.checklistEditInput.Focus()
+				m.checklistEditInput.SetCursor(0)
+				return m, textinput.Blink
+			}
+			return m, nil
+			
+		case "r":
+			if m.checklistSelectedIdx < len(m.checklistViewItems) {
+				m.checklistEditingItem = &m.checklistViewItems[m.checklistSelectedIdx]
+				m.checklistEditOriginal = m.getChecklistEditOriginal()
+				m.checklistEditInput.SetValue(m.checklistEditOriginal)
+				m.checklistEditInput.Placeholder = "Name..."
+				m.checklistEditInput.Focus()
+				m.checklistEditInput.SetCursor(len(m.checklistEditInput.Value()))
+				return m, textinput.Blink
+			}
+			return m, nil
+			
+		case "d":
+			if m.checklistSelectedIdx < len(m.checklistViewItems) {
+				item := m.checklistViewItems[m.checklistSelectedIdx]
+				if item.itemType == checklistTypeItem {
+					m.loading = true
+					m.loadingMsg = "Deleting item..."
+					checklist := item.checklist
+					return m, tea.Batch(m.spinner.Tick, func() tea.Msg {
+						if err := m.client.DeleteChecklistItem(checklist.ID, item.item.ID); err != nil {
+							return errMsg(err)
+						}
+						return checklistItemUpdatedMsg{}
+					})
+				} else {
+					m.checklistPendingDelete = item.checklist
+					m.state = stateConfirmChecklistDelete
+					return m, nil
+				}
+			}
+			return m, nil
+			
+		case "R", "D":
+			if m.checklistSelectedIdx < len(m.checklistViewItems) {
+				item := m.checklistViewItems[m.checklistSelectedIdx]
+				if item.itemType == checklistTypeHeader {
+					if s == "D" {
+						m.checklistPendingDelete = item.checklist
+						m.state = stateConfirmChecklistDelete
+						return m, nil
+					}
+					m.checklistEditingItem = &m.checklistViewItems[m.checklistSelectedIdx]
+					m.checklistEditOriginal = m.getChecklistEditOriginal()
+					m.checklistEditInput.SetValue(item.checklist.Name)
+					m.checklistEditInput.Placeholder = "Checklist name..."
+					m.checklistEditInput.Focus()
+					m.checklistEditInput.SetCursor(len(m.checklistEditInput.Value()))
+					return m, textinput.Blink
+				}
+			}
+			return m, nil
+			
+		case "n":
+			m.checklistEditInput.SetValue("")
+			m.checklistEditInput.Placeholder = "New checklist name..."
+			m.checklistEditInput.Focus()
+			m.checklistEditInput.SetCursor(0)
+			m.checklistEditingItem = nil
+			m.checklistPendingDelete = clickup.Checklist{}
+			return m, textinput.Blink
+		}
+	}
+	
+	var cmd tea.Cmd
+	m.checklistEditInput, cmd = m.checklistEditInput.Update(msg)
+	return m, cmd
+}
+
+func (m *AppModel) updateConfirmChecklistDelete(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch strings.ToLower(msg.String()) {
+		case "y":
+			checklist := m.checklistPendingDelete
+			m.checklistPendingDelete = clickup.Checklist{}
+			m.loading = true
+			m.loadingMsg = "Deleting checklist..."
+			return m, tea.Batch(m.spinner.Tick, func() tea.Msg {
+				if err := m.client.DeleteChecklist(checklist.ID); err != nil {
+					return errMsg(err)
+				}
+				return checklistDeletedMsg{}
+			})
+		case "n", "esc", "q":
+			m.checklistPendingDelete = clickup.Checklist{}
+			m.state = stateChecklist
+			return m, nil
 		}
 	}
 	return m, nil
@@ -3784,7 +4198,18 @@ func (m *AppModel) updateHelpContent() {
 	b.WriteString("• D                : Copy ticket description\n")
 	b.WriteString("• t                : Create a new subtask\n")
 	b.WriteString("• s                : Copy ticket URL to clipboard\n")
-	b.WriteString("• r                : Refresh current view from API\n\n")
+	b.WriteString("• r                : Refresh current view from API\n")
+	b.WriteString("• L                : Open checklist view\n")
+	b.WriteString("• ↑↓/jk            : Navigate checklist items\n")
+	b.WriteString("• Space            : Toggle item complete\n")
+	b.WriteString("• Enter            : Edit item name\n")
+	b.WriteString("• a                : Add new item\n")
+	b.WriteString("• r                : Rename (item or checklist)\n")
+	b.WriteString("• d                : Delete item\n")
+	b.WriteString("• n                : Create new checklist\n")
+	b.WriteString("• R                : Rename checklist\n")
+	b.WriteString("• D                : Delete checklist\n")
+	b.WriteString("• Esc              : Exit to task detail\n\n")
 
 	b.WriteString(lipgloss.NewStyle().Bold(true).Render("List Actions"))
 	b.WriteString("\n")
@@ -4063,6 +4488,10 @@ func (m *AppModel) View() string {
 	case stateTaskDetail:
 		hint := lipgloss.NewStyle().Foreground(ColorSubtext).Render("q: back • a/n: new task • c: comment • T: edit title • e: edit desc • E: vim edit • D: copy desc • t: subtask • o: open • s: copy • r: refresh")
 		mainContent = m.vp.View() + "\n" + hint
+	case stateChecklist:
+		mainContent = lipgloss.Place(m.width, m.height-8, lipgloss.Center, lipgloss.Center, m.renderChecklistView()+"\n\n"+m.checklistEditInput.View())
+	case stateConfirmChecklistDelete:
+		mainContent = lipgloss.Place(m.width, m.height-8, lipgloss.Center, lipgloss.Center, m.renderConfirmChecklistDelete())
 	case stateHelp:
 		mainContent = m.vp.View()
 	case stateComment:
