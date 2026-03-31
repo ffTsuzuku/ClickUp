@@ -48,14 +48,17 @@ var (
 
 	ChecklistHeaderStyle = lipgloss.NewStyle().
 				Foreground(ColorPrimary).
-				Bold(true)
+				Bold(true).
+				Align(lipgloss.Left)
 
 	ChecklistItemStyle = lipgloss.NewStyle().
-				Foreground(ColorText)
+				Foreground(ColorText).
+				Align(lipgloss.Left)
 
 	ChecklistItemResolvedStyle = lipgloss.NewStyle().
 					Foreground(ColorSubtext).
-					Strikethrough(true)
+					Strikethrough(true).
+					Align(lipgloss.Left)
 
 	ChecklistCheckboxStyle = lipgloss.NewStyle().
 				Foreground(ColorPrimary)
