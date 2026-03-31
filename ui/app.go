@@ -1826,7 +1826,7 @@ func (m *AppModel) flattenChecklists() {
 }
 
 func (m *AppModel) isEditingChecklistItem() bool {
-	return m.checklistEditingItem != nil
+	return m.checklistEditInput.Focused()
 }
 
 func (m *AppModel) getChecklistEditOriginal() string {
@@ -2940,7 +2940,7 @@ func (m *AppModel) updateChecklist(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		s := msg.String()
 
-		if m.isEditingChecklistItem() || m.checklistPendingCreate != "" {
+		if m.isEditingChecklistItem() {
 			switch msg.Type {
 			case tea.KeyEnter:
 				newValue := strings.TrimSpace(m.checklistEditInput.Value())
