@@ -1941,7 +1941,6 @@ func (m *AppModel) renderChecklistView() string {
 	b.WriteString(TitleStyle.Render("Checklists"))
 	b.WriteString("\n\n")
 
-	indent := "  "
 	checkboxUnchecked := lipgloss.NewStyle().Foreground(ColorPrimary).Render("[ ]")
 	checkboxChecked := lipgloss.NewStyle().Foreground(ColorSecondary).Render("[x]")
 
@@ -1949,7 +1948,7 @@ func (m *AppModel) renderChecklistView() string {
 		isSelected := idx == m.checklistSelectedIdx
 
 		if viewItem.itemType == checklistTypeHeader {
-			prefix := indent + "● "
+			prefix := "● "
 			line := prefix + viewItem.checklist.Name
 			if isSelected {
 				line = ChecklistSelectedStyle.Render(">" + line[1:])
@@ -1965,7 +1964,7 @@ func (m *AppModel) renderChecklistView() string {
 				checkbox = checkboxChecked
 				itemStyle = ChecklistItemResolvedStyle
 			}
-			line := fmt.Sprintf("%s%d. %s %s", indent, viewItem.itemIndex+1, checkbox, viewItem.item.Name)
+			line := fmt.Sprintf("%d. %s %s", viewItem.itemIndex+1, checkbox, viewItem.item.Name)
 			if isSelected {
 				b.WriteString(ChecklistSelectedStyle.Render(line))
 			} else {
