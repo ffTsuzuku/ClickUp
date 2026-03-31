@@ -381,30 +381,31 @@ func newBaseModel(cfg *config.Config) *AppModel {
 	s.Style = lipgloss.NewStyle().Foreground(ColorPrimary)
 
 	m := &AppModel{
-		state:                stateTeams,
-		prevState:            stateTeams,
-		cfg:                  cfg,
-		client:               clickup.NewClient(cfg.ClickupAPIKey),
-		teamsList:            teamsList,
-		spacesList:           spacesList,
-		listsList:            listsList,
-		tasksList:            tasksList,
-		searchList:           searchList,
-		fileList:             fileList,
-		commentInput:         ci,
-		taskInput:            ti,
-		descInput:            da,
-		cmdInput:             cmd,
-		vp:                   vp,
-		renderer:             r,
-		spinner:              s,
-		checklistViewItems:   nil,
-		checklistSelectedIdx: 0,
-		checklistEditingItem: nil,
-		checklistEditInput:   clEdit,
-		currentUser:          "Unauthenticated",
-		currentUserID:        0,
-		activeProfile:        cfg.ActiveProfileName(),
+		state:                  stateTeams,
+		prevState:              stateTeams,
+		cfg:                    cfg,
+		client:                 clickup.NewClient(cfg.ClickupAPIKey),
+		teamsList:              teamsList,
+		spacesList:             spacesList,
+		listsList:              listsList,
+		tasksList:              tasksList,
+		searchList:             searchList,
+		fileList:               fileList,
+		commentInput:           ci,
+		taskInput:              ti,
+		descInput:              da,
+		cmdInput:               cmd,
+		vp:                     vp,
+		renderer:               r,
+		spinner:                s,
+		checklistViewItems:     nil,
+		checklistSelectedIdx:   0,
+		checklistEditingItem:   nil,
+		checklistPendingCreate: "",
+		checklistEditInput:     clEdit,
+		currentUser:            "Unauthenticated",
+		currentUserID:          0,
+		activeProfile:          cfg.ActiveProfileName(),
 	}
 	m.activeList = &m.teamsList
 	return m
@@ -633,6 +634,7 @@ type AppModel struct {
 	checklistEditingItem   *checklistViewItem
 	checklistEditInput     textinput.Model
 	checklistPendingDelete string
+	checklistPendingCreate string
 	checklistEditOriginal  string
 
 	currentUser   string
@@ -1740,7 +1742,23 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case checklistCreatedMsg:
 		m.loading = false
-		if m.checklistEditingItem == nil && m.checklistEditInput.Value() != "" {
+		if m.checklistPendingCreate != "" && m.checklistEditInput.Value() != "" {
+			newValue := strings.TrimSpace(m.checklistEditInput.Value())
+			m.checklistEditInput.SetValue("")
+			m.checklistEditInput.Blur()
+			if newValue != "" {
+				checklistID := m.checklistPendingCreate
+				m.checklistPendingCreate = ""
+				m.loading = true
+				m.loadingMsg = "Adding item..."
+				return m, tea.Batch(m.spinner.Tick, func() tea.Msg {
+					if err := m.client.CreateChecklistItem(checklistID, newValue); err != nil {
+						return errMsg(err)
+					}
+					return checklistItemUpdatedMsg{}
+				})
+			}
+		} else if m.checklistPendingCreate == "" && m.checklistEditInput.Value() != "" {
 			name := strings.TrimSpace(m.checklistEditInput.Value())
 			m.checklistEditInput.SetValue("")
 			m.checklistEditInput.Blur()
@@ -1754,24 +1772,8 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return checklistItemUpdatedMsg{}
 				})
 			}
-		} else if m.checklistEditingItem != nil && m.checklistEditInput.Value() != "" {
-			newValue := strings.TrimSpace(m.checklistEditInput.Value())
-			m.checklistEditInput.SetValue("")
-			m.checklistEditInput.Blur()
-			if newValue != "" {
-				item := *m.checklistEditingItem
-				m.checklistEditingItem = nil
-				m.loading = true
-				m.loadingMsg = "Adding item..."
-				return m, tea.Batch(m.spinner.Tick, func() tea.Msg {
-					if err := m.client.CreateChecklistItem(item.checklist.ID, newValue); err != nil {
-						return errMsg(err)
-					}
-					return checklistItemUpdatedMsg{}
-				})
-			}
 		}
-		m.checklistEditingItem = nil
+		m.checklistPendingCreate = ""
 		return m, nil
 
 	case checklistDeletedMsg:
@@ -3070,12 +3072,15 @@ func (m *AppModel) updateChecklist(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "a":
 			if m.checklistSelectedIdx < len(m.checklistViewItems) {
-				m.checklistEditingItem = &m.checklistViewItems[m.checklistSelectedIdx]
+				selectedItem := m.checklistViewItems[m.checklistSelectedIdx]
+				m.checklistPendingCreate = selectedItem.checklist.ID
 				m.checklistEditInput.SetValue("")
 				m.checklistEditInput.Placeholder = "New item name..."
 				m.checklistEditInput.Focus()
 				m.checklistEditInput.SetCursor(0)
-				return m, textinput.Blink
+				return m, tea.Batch(textinput.Blink, func() tea.Msg {
+					return checklistCreatedMsg{}
+				})
 			}
 			return m, nil
 
@@ -3135,7 +3140,7 @@ func (m *AppModel) updateChecklist(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.checklistEditInput.Placeholder = "New checklist name..."
 			m.checklistEditInput.Focus()
 			m.checklistEditInput.SetCursor(0)
-			m.checklistEditingItem = nil
+			m.checklistPendingCreate = ""
 			m.checklistPendingDelete = ""
 			return m, tea.Batch(textinput.Blink, func() tea.Msg {
 				return checklistCreatedMsg{}
