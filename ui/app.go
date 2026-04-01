@@ -1132,6 +1132,56 @@ func (m *AppModel) copyTaskDescription() tea.Cmd {
 	})
 }
 
+func (m *AppModel) copyTaskForAI() tea.Cmd {
+	var sb strings.Builder
+	t := m.selectedTask
+	ticket_id := t.ID
+	if t.CustomID != "" {
+			ticket_id = t.CustomID
+	}
+
+	sb.WriteString(fmt.Sprintf("Ticket ID: %s\n", ticket_id))	
+	sb.WriteString(fmt.Sprintf("Title: %s\n", t.Name))
+	
+	desc := m.editableDescription()
+	if desc != "" {
+		sb.WriteString("\n=== Description ===\n")
+		sb.WriteString(desc)
+		sb.WriteString("\n")
+	}
+
+	if len(t.Checklists) > 0 {
+		sb.WriteString("\n=== Checklists ===\n")
+		for _, cl := range t.Checklists {
+			sb.WriteString(fmt.Sprintf("- %s\n", cl.Name))
+			for _, item := range cl.Items {
+				status := "[ ]"
+				if item.Resolved {
+					status = "[x]"
+				}
+				sb.WriteString(fmt.Sprintf("  %s %s\n", status, item.Name))
+			}
+		}
+	}
+
+	if len(m.selectedComments) > 0 {
+		sb.WriteString("\n=== Comments ===\n")
+		for _, c := range m.selectedComments {
+			dateStr := c.Date
+			if ms, err := strconv.ParseInt(c.Date, 10, 64); err == nil {
+				dateStr = time.UnixMilli(ms).Format(time.RFC822)
+			}
+			sb.WriteString(fmt.Sprintf("- %s (%s): %s\n-----------\n", c.User.Username, dateStr, c.CommentText))
+		}
+	}
+
+	clipboard.WriteAll(sb.String())
+	m.popupMsg = "Copied task context for AI to clipboard"
+	return tea.Tick(time.Second*2, func(_ time.Time) tea.Msg {
+		return clearPopupMsg{}
+	})
+}
+
 func fetchTeamMembersCmd(c *clickup.Client, teamID string) tea.Cmd {
 	return func() tea.Msg {
 		members, err := c.GetTeamMembers(teamID)
@@ -2120,6 +2170,7 @@ func (m *AppModel) updateCommandSuggestions() {
 		sugs = append(sugs, Suggestion{"/title", "Edit the ticket title"})
 		sugs = append(sugs, Suggestion{"/desc", "Edit the ticket description (inline)"})
 		sugs = append(sugs, Suggestion{"/copydesc", "Copy the ticket description to your clipboard"})
+		sugs = append(sugs, Suggestion{"/copyai", "Copy the ticket context for AI prompting to your clipboard"})
 		sugs = append(sugs, Suggestion{"/editext", "Edit description in $EDITOR (vim etc)"})
 		sugs = append(sugs, Suggestion{"/subtask", "Add a subtask to this ticket"})
 		sugs = append(sugs, Suggestion{"/checklist add ", "Create a checklist (or use 'n' in checklist view)"})
@@ -2602,6 +2653,8 @@ func (m *AppModel) updateDetail(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, openExternalEditorCmd(m.editableDescription())
 		case "D":
 			return m, m.copyTaskDescription()
+		case "A":
+			return m, m.copyTaskForAI()
 		case "t":
 			m.parentTaskID = m.selectedTask.ID
 			m.state = stateCreateSubtask
@@ -3664,6 +3717,10 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.prevState == stateTaskDetail {
 					return m, m.copyTaskDescription()
 				}
+			} else if strings.HasPrefix(val, "/copyai") {
+				if m.prevState == stateTaskDetail {
+					return m, m.copyTaskForAI()
+				}
 			} else if strings.HasPrefix(val, "/editext") {
 				if m.prevState == stateTaskDetail {
 					m.externalEditTarget = "description"
@@ -4284,6 +4341,7 @@ func (m *AppModel) updateHelpContent() {
 	b.WriteString("• /title           : Edit the ticket title\n")
 	b.WriteString("• /desc            : Edit description (inline)\n")
 	b.WriteString("• /copydesc        : Copy ticket description to clipboard\n")
+	b.WriteString("• /copyai          : Copy ticket context for AI prompting\n")
 	b.WriteString("• /editext         : Edit description in external $EDITOR\n")
 	b.WriteString("• /subtask         : Create a new subtask\n")
 	b.WriteString("• /checklist add <name>                    : Create a checklist\n")
@@ -4302,6 +4360,7 @@ func (m *AppModel) updateHelpContent() {
 	b.WriteString("• e                : Edit description (inline)\n")
 	b.WriteString("• E                : Edit description in external $EDITOR\n")
 	b.WriteString("• D                : Copy ticket description\n")
+	b.WriteString("• A                : Copy ticket context for AI prompting\n")
 	b.WriteString("• t                : Create a new subtask\n")
 	b.WriteString("• s                : Copy ticket URL to clipboard\n")
 	b.WriteString("• r                : Refresh current view from API\n")
