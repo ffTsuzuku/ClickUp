@@ -54,8 +54,7 @@ var (
 		Foreground(ColorText)
 
 	ChecklistItemResolvedStyle = lipgloss.NewStyle().
-		Foreground(ColorSubtext).
-		Strikethrough(true)
+		Foreground(ColorSubtext)
 
 	ChecklistCheckboxStyle = lipgloss.NewStyle().
 		Foreground(ColorPrimary)

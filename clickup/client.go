@@ -334,9 +334,11 @@ type Attachment struct {
 }
 
 type ChecklistItem struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Resolved bool   `json:"resolved"`
+	ID       string          `json:"id"`
+	Name     string          `json:"name"`
+	Resolved bool            `json:"resolved"`
+	Parent   *string         `json:"parent,omitempty"`
+	Children []ChecklistItem `json:"children,omitempty"`
 }
 
 type Checklist struct {
@@ -598,11 +600,18 @@ func (c *Client) CreateChecklistItem(checklistID, name string) error {
 	return err
 }
 
-func (c *Client) UpdateChecklistItem(checklistID, itemID, name string, resolved bool) error {
+func (c *Client) UpdateChecklistItem(checklistID, itemID, name string, resolved bool, parentID *string) error {
 	endpoint := fmt.Sprintf("/checklist/%s/checklist_item/%s", checklistID, itemID)
 	reqBody := map[string]interface{}{
 		"name":     name,
 		"resolved": resolved,
+	}
+	if parentID != nil {
+		if *parentID == "" {
+			reqBody["parent"] = nil
+		} else {
+			reqBody["parent"] = *parentID
+		}
 	}
 	body, _ := json.Marshal(reqBody)
 	_, err := c.doReq("PUT", endpoint, body)

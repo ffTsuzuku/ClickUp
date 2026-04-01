@@ -109,6 +109,7 @@ type checklistViewItem struct {
 	checklist  clickup.Checklist
 	item       clickup.ChecklistItem
 	itemIndex  int
+	depth      int
 }
 
 type checklistDeleteConfirmMsg struct {
@@ -1468,11 +1469,16 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		m.selectedComments = msg.Comments
 
-		if m.state != stateTaskDetail {
+		wasChecklist := m.state == stateChecklist || m.state == stateConfirmChecklistDelete
+		if m.state != stateTaskDetail && !wasChecklist {
 			m.taskHistory = nil
 		}
-		m.state = stateTaskDetail
-		m.prevState = msg.BackState
+		if wasChecklist {
+			m.flattenChecklists()
+		} else {
+			m.state = stateTaskDetail
+			m.prevState = msg.BackState
+		}
 		m.updateViewportContent()
 		return m, nil
 	case attachmentUploadedMsg:
@@ -1804,14 +1810,39 @@ func (m *AppModel) flattenChecklists() {
 			itemType: checklistTypeHeader,
 			checklist: cl,
 		})
-		for i, item := range cl.Items {
-			m.checklistViewItems = append(m.checklistViewItems, checklistViewItem{
-				itemType:  checklistTypeItem,
-				checklist: cl,
-				item:      item,
-				itemIndex: i,
-			})
+		
+		var topLevel []clickup.ChecklistItem
+		childrenMap := make(map[string][]clickup.ChecklistItem)
+		
+		for _, item := range cl.Items {
+			if item.Parent != nil && *item.Parent != "" {
+				childrenMap[*item.Parent] = append(childrenMap[*item.Parent], item)
+			} else {
+				topLevel = append(topLevel, item)
+			}
 		}
+		
+		var traverse func(items []clickup.ChecklistItem, depth int)
+		itemIndex := 0
+		traverse = func(items []clickup.ChecklistItem, depth int) {
+			for _, item := range items {
+				m.checklistViewItems = append(m.checklistViewItems, checklistViewItem{
+					itemType:  checklistTypeItem,
+					checklist: cl,
+					item:      item,
+					itemIndex: itemIndex,
+					depth:     depth,
+				})
+				itemIndex++
+				
+				if children, ok := childrenMap[item.ID]; ok {
+					traverse(children, depth+1)
+				} else if len(item.Children) > 0 {
+					traverse(item.Children, depth+1)
+				}
+			}
+		}
+		traverse(topLevel, 0)
 	}
 	if m.checklistSelectedIdx >= len(m.checklistViewItems) {
 		m.checklistSelectedIdx = 0
@@ -1958,14 +1989,15 @@ func (m *AppModel) renderChecklistView() string {
 				itemStyle = ChecklistItemResolvedStyle
 			}
 			
-			prefix := fmt.Sprintf("%s%d. ", indent, viewItem.itemIndex+1)
+			padding := strings.Repeat("  ", viewItem.depth)
+			prefix := fmt.Sprintf("%s%s%d. ", indent, padding, viewItem.itemIndex+1)
 			name := viewItem.item.Name
 			
 			if isSelected {
 				// Apply selected background to the whole line, but preserve strikethrough if resolved
 				textStyle := ChecklistSelectedStyle
 				if viewItem.item.Resolved {
-					textStyle = textStyle.Copy().Strikethrough(true).Foreground(ColorSubtext)
+					textStyle = textStyle.Copy().Foreground(ColorSubtext)
 				}
 				// The checkbox also needs the background color when selected
 				cbStyle := lipgloss.NewStyle().Background(ColorBorder).Foreground(ColorSecondary)
@@ -1985,7 +2017,7 @@ func (m *AppModel) renderChecklistView() string {
 	}
 	
 	b.WriteString("\n")
-	b.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext).Italic(true).Render("↑↓ Navigate | Space Toggle | a Add | r Rename | d Delete | n New checklist | Esc Back"))
+	b.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext).Italic(true).Render("↑↓ Navigate | Space Toggle | Tab/Shift+Tab Indent | a Add | r Rename | d Delete | n New | q Back"))
 	
 	return b.String()
 }
@@ -2995,7 +3027,7 @@ func (m *AppModel) updateChecklist(msg tea.Msg) (tea.Model, tea.Cmd) {
 							item := editingItem.item
 							checklist := editingItem.checklist
 							return m, tea.Batch(m.spinner.Tick, func() tea.Msg {
-								if err := m.client.UpdateChecklistItem(checklist.ID, item.ID, newValue, item.Resolved); err != nil {
+								if err := m.client.UpdateChecklistItem(checklist.ID, item.ID, newValue, item.Resolved, nil); err != nil {
 									return errMsg(err)
 								}
 								return checklistItemUpdatedMsg{}
@@ -3018,7 +3050,7 @@ func (m *AppModel) updateChecklist(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		
 		switch s {
-		case "esc", "q":
+		case "q":
 			m.checklistViewItems = nil
 			m.checklistSelectedIdx = 0
 			m.state = stateTaskDetail
@@ -3036,6 +3068,80 @@ func (m *AppModel) updateChecklist(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.checklistSelectedIdx++
 			}
 			return m, nil
+
+		case "tab":
+			if m.checklistSelectedIdx > 0 && m.checklistSelectedIdx < len(m.checklistViewItems) {
+				currentItem := m.checklistViewItems[m.checklistSelectedIdx]
+				if currentItem.itemType == checklistTypeItem {
+					// Find the nearest preceding item with the same parent
+					var targetParentID string
+					foundTarget := false
+					
+					for i := m.checklistSelectedIdx - 1; i >= 0; i-- {
+						prevItem := m.checklistViewItems[i]
+						if prevItem.itemType == checklistTypeItem && prevItem.checklist.ID == currentItem.checklist.ID {
+							// Check if this prevItem has the exact same parent
+							sameParent := false
+							if currentItem.item.Parent == nil || *currentItem.item.Parent == "" {
+								sameParent = (prevItem.item.Parent == nil || *prevItem.item.Parent == "")
+							} else {
+								sameParent = (prevItem.item.Parent != nil && *prevItem.item.Parent == *currentItem.item.Parent)
+							}
+							
+							if sameParent {
+								targetParentID = prevItem.item.ID
+								foundTarget = true
+								break
+							}
+						}
+					}
+					
+					if foundTarget {
+						m.loading = true
+						m.loadingMsg = "Indenting..."
+						return m, tea.Batch(m.spinner.Tick, func() tea.Msg {
+							if err := m.client.UpdateChecklistItem(currentItem.checklist.ID, currentItem.item.ID, currentItem.item.Name, currentItem.item.Resolved, &targetParentID); err != nil {
+								return errMsg(err)
+							}
+							return checklistItemUpdatedMsg{}
+						})
+					}
+				}
+			}
+			return m, nil
+
+		case "shift+tab":
+			if m.checklistSelectedIdx < len(m.checklistViewItems) {
+				currentItem := m.checklistViewItems[m.checklistSelectedIdx]
+				if currentItem.itemType == checklistTypeItem {
+					if currentItem.item.Parent != nil && *currentItem.item.Parent != "" {
+						var grandparentID string
+						for i := m.checklistSelectedIdx - 1; i >= 0; i-- {
+							prevItem := m.checklistViewItems[i]
+							if prevItem.itemType == checklistTypeItem && prevItem.checklist.ID == currentItem.checklist.ID {
+								if prevItem.item.ID == *currentItem.item.Parent {
+									if prevItem.item.Parent != nil && *prevItem.item.Parent != "" {
+										grandparentID = *prevItem.item.Parent
+									} else {
+										grandparentID = ""
+									}
+									break
+								}
+							}
+						}
+
+						m.loading = true
+						m.loadingMsg = "Outdenting..."
+						return m, tea.Batch(m.spinner.Tick, func() tea.Msg {
+							if err := m.client.UpdateChecklistItem(currentItem.checklist.ID, currentItem.item.ID, currentItem.item.Name, currentItem.item.Resolved, &grandparentID); err != nil {
+								return errMsg(err)
+							}
+							return checklistItemUpdatedMsg{}
+						})
+					}
+				}
+			}
+			return m, nil
 			
 		case " ":
 			if m.checklistSelectedIdx < len(m.checklistViewItems) {
@@ -3045,7 +3151,7 @@ func (m *AppModel) updateChecklist(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.loadingMsg = "Toggling..."
 					checklist := item.checklist
 					return m, tea.Batch(m.spinner.Tick, func() tea.Msg {
-						if err := m.client.UpdateChecklistItem(checklist.ID, item.item.ID, item.item.Name, !item.item.Resolved); err != nil {
+						if err := m.client.UpdateChecklistItem(checklist.ID, item.item.ID, item.item.Name, !item.item.Resolved, nil); err != nil {
 							return errMsg(err)
 						}
 						return checklistItemUpdatedMsg{}
@@ -3682,7 +3788,7 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 									m.loading = true
 									m.loadingMsg = "Renaming checklist item..."
 									return m, tea.Batch(m.spinner.Tick, func() tea.Msg {
-										if err := m.client.UpdateChecklistItem(checklist.ID, item.ID, name, item.Resolved); err != nil {
+										if err := m.client.UpdateChecklistItem(checklist.ID, item.ID, name, item.Resolved, nil); err != nil {
 											return errMsg(err)
 										}
 										return refreshTaskDetailCmd(m.client, m.selectedTask.ID, m.selectedTeam, m.detailBackState)()
@@ -3691,7 +3797,7 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 									m.loading = true
 									m.loadingMsg = "Updating checklist item..."
 									return m, tea.Batch(m.spinner.Tick, func() tea.Msg {
-										if err := m.client.UpdateChecklistItem(checklist.ID, item.ID, item.Name, !item.Resolved); err != nil {
+										if err := m.client.UpdateChecklistItem(checklist.ID, item.ID, item.Name, !item.Resolved, nil); err != nil {
 											return errMsg(err)
 										}
 										return refreshTaskDetailCmd(m.client, m.selectedTask.ID, m.selectedTeam, m.detailBackState)()
@@ -4489,7 +4595,7 @@ func (m *AppModel) View() string {
 		hint := lipgloss.NewStyle().Foreground(ColorSubtext).Render("q: back • a/n: new task • c: comment • T: edit title • e: edit desc • E: vim edit • D: copy desc • t: subtask • o: open • s: copy • r: refresh")
 		mainContent = m.vp.View() + "\n" + hint
 	case stateChecklist:
-		mainContent = lipgloss.Place(m.width, m.height-8, lipgloss.Center, lipgloss.Center, m.renderChecklistView()+"\n\n"+m.checklistEditInput.View())
+		mainContent = lipgloss.Place(m.width, m.height-8, lipgloss.Left, lipgloss.Top, m.renderChecklistView()+"\n\n"+m.checklistEditInput.View(), lipgloss.WithWhitespaceChars(" "))
 	case stateConfirmChecklistDelete:
 		mainContent = lipgloss.Place(m.width, m.height-8, lipgloss.Center, lipgloss.Center, m.renderConfirmChecklistDelete())
 	case stateHelp:
