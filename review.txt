@@ -1,0 +1,83 @@
+# Workspace Screen
+
+## Irrelevant Slash Commands (DONE)
+- clear
+- ticket
+- search 
+- list commands
+
+# Need Revamp
+## Profile
+- /profile list is useless it just shows a popup with names delete it
+- having to do /profile create and then /profile token  is cumbersome
+	- Either extend  to /profile create <name> <token>
+	- Or Have a Profile Create form
+
+# Spaces
+## Missing functionality (DONE)
+- space delete command
+- pressing a should begin prompt to add space
+- pressing d should prompt to confirm delete
+- pressing e should prompt to rename
+- update keyboard hotkeys in the bottom
+
+## Non-Functional (DONE)
+- list create in the space screen adds list to wrong space. lets just remove
+all space commands in space screen in general.
+
+# Space List View 
+## Non-Functional (DONE)
+- Remove all space commands in this screen.
+- Filter command does not show up until you type into command bar
+
+## Missing functionality
+- pressing a should begin prompt to add list
+- pressing d should prompt to confirm delete
+- pressing e should prompt to rename
+- profile switch command missing from suggestions
+- profile delete command missing from suggestions
+- update keyboard hotkeys in the bottom
+
+
+# Ticket List View
+## Missing Functionality
+- pressing d should prompt to confirm delete
+- pressing e should prompt to rename
+- profile switch command missing from suggestions
+- profile delete command missing from suggestions
+
+# Ticket Details
+## Remove
+- D to copy desc hotkey is dumb. Instead we need a slash command. 
+	- /copy title
+	- /copy desc
+	- /copy checklist
+	- /copy all (current aicopy)
+
+- right now bottom hotkeys say s: copy should be s: share
+
+
+## Refactor
+Remove hotkeys T and e, and E. replace with commands
+/edit title
+/edit desc
+/edit desc externally
+
+## Missing Functionality
+- AI Formats ticket into prompt via gemini 
+- Multiple CLI Agent Support
+- Add a seperate interface like Checklist Ui for comments. 
+
+## Non-functional
+- The bottom hotkeys shows a/n new task. This currently does nothing.
+change it to be just a. and make it do the what t (create subtask currently does)
+then remove t
+
+- if you press L to go to checklist ui and there is no checklist set up. it
+correctly tells you so in a popup, however it also tells you to press n to add a 
+checklist which is false.
+
+- pressibg / in new comment ui shows task list ui
+
+- dekete comment in the new comment ui. you'll be stuck in ticket list view 
+cant cant enter tickets
