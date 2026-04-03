@@ -1,5 +1,7 @@
 # ToTUI
 
+![Screenshot](public/trailer.gif)
+
 Keyboard-first ClickUp client for the terminal, built with Bubble Tea.
 
 This application lets you browse ClickUp workspaces, spaces, folders, lists, and tasks without leaving the shell. The current codebase supports task editing, comments, checklists, attachments, list and space management, saved routing defaults, and multiple ClickUp profiles.
