@@ -365,9 +365,6 @@ func (m *AppModel) filterSuggestions() {
 		}
 		if match {
 			m.filteredSuggest = append(m.filteredSuggest, s)
-			if len(m.filteredSuggest) >= 10 {
-				break
-			}
 		}
 	}
 	m.suggestIdx = 0

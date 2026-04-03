@@ -674,8 +674,6 @@ func (m *AppModel) updateDetail(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			m.externalEditTarget = "description"
 			return m, openExternalEditorCmd(m.editableDescription())
-		case "D":
-			return m, m.copyTaskDescription()
 		case "A":
 			return m, m.copyTaskForAI()
 		case "t":
@@ -1783,13 +1781,24 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.taskInput.SetCursor(len(m.taskInput.Value()))
 					return m, textinput.Blink
 				}
-			} else if strings.HasPrefix(val, "/copydesc") {
+			} else if strings.HasPrefix(val, "/copy ") {
 				if m.prevState == stateTaskDetail {
-					return m, m.copyTaskDescription()
-				}
-			} else if strings.HasPrefix(val, "/copyai") {
-				if m.prevState == stateTaskDetail {
-					return m, m.copyTaskForAI()
+					parts := strings.Fields(val)
+					if len(parts) >= 2 {
+						target := strings.ToLower(parts[1])
+						switch target {
+						case "title":
+							return m, m.copyTaskTitle()
+						case "desc":
+							return m, m.copyTaskDescription()
+						case "checklist":
+							return m, m.copyTaskChecklists()
+						case "all":
+							return m, m.copyTaskForAI()
+						}
+					}
+					m.popupMsg = "Unknown /copy command. Use /copy [title|desc|checklist|all]"
+					return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
 				}
 			} else if strings.HasPrefix(val, "/editext") {
 				if m.prevState == stateTaskDetail {

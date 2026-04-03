@@ -281,6 +281,9 @@ func (m *AppModel) updateLayout() {
 	if m.state == stateCommand {
 		menuH := len(m.filteredSuggest)
 		if menuH > 0 {
+			if menuH > 10 {
+				menuH = 12
+			}
 			contentH -= (menuH + 1)
 		}
 	}

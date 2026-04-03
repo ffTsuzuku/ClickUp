@@ -388,6 +388,40 @@ func (m *AppModel) copyTaskDescription() tea.Cmd {
 	})
 }
 
+func (m *AppModel) copyTaskTitle() tea.Cmd {
+	clipboard.WriteAll(m.selectedTask.Name)
+	m.popupMsg = "Copied title to clipboard"
+	return tea.Tick(time.Second*1, func(_ time.Time) tea.Msg {
+		return clearPopupMsg{}
+	})
+}
+
+func (m *AppModel) copyTaskChecklists() tea.Cmd {
+	var sb strings.Builder
+	if len(m.selectedTask.Checklists) > 0 {
+		for _, cl := range m.selectedTask.Checklists {
+			sb.WriteString(fmt.Sprintf("- %s\n", cl.Name))
+			for _, item := range cl.Items {
+				status := "[ ]"
+				if item.Resolved {
+					status = "[x]"
+				}
+				sb.WriteString(fmt.Sprintf("  %s %s\n", status, item.Name))
+			}
+		}
+	} else {
+		m.popupMsg = "No checklists to copy"
+		return tea.Tick(time.Second*1, func(_ time.Time) tea.Msg {
+			return clearPopupMsg{}
+		})
+	}
+	clipboard.WriteAll(sb.String())
+	m.popupMsg = "Copied checklists to clipboard"
+	return tea.Tick(time.Second*1, func(_ time.Time) tea.Msg {
+		return clearPopupMsg{}
+	})
+}
+
 func (m *AppModel) copyTaskForAI() tea.Cmd {
 	var sb strings.Builder
 	t := m.selectedTask

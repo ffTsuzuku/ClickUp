@@ -273,8 +273,10 @@ func (m *AppModel) updateCommandSuggestions() {
 		sugs = append(sugs, Suggestion{"/assign ", "Change assignee (e.g. /assign deep)"})
 		sugs = append(sugs, Suggestion{"/title", "Edit the ticket title"})
 		sugs = append(sugs, Suggestion{"/desc", "Edit the ticket description (inline)"})
-		sugs = append(sugs, Suggestion{"/copydesc", "Copy the ticket description to your clipboard"})
-		sugs = append(sugs, Suggestion{"/copyai", "Copy the ticket context for AI prompting to your clipboard"})
+		sugs = append(sugs, Suggestion{"/copy title", "Copy the ticket title to your clipboard"})
+		sugs = append(sugs, Suggestion{"/copy desc", "Copy the ticket description to your clipboard"})
+		sugs = append(sugs, Suggestion{"/copy checklist", "Copy the ticket checklists to your clipboard"})
+		sugs = append(sugs, Suggestion{"/copy all", "Copy the ticket context for AI prompting to your clipboard"})
 		sugs = append(sugs, Suggestion{"/editext", "Edit description in $EDITOR (vim etc)"})
 		sugs = append(sugs, Suggestion{"/subtask", "Add a subtask to this ticket"})
 		sugs = append(sugs, Suggestion{"/checklist", "Manage checklists"})
@@ -585,8 +587,10 @@ func (m *AppModel) updateHelpContent() {
 	b.WriteString("• /assign <user>   : Assign the ticket to a user\n")
 	b.WriteString("• /title           : Edit the ticket title\n")
 	b.WriteString("• /desc            : Edit description (inline)\n")
-	b.WriteString("• /copydesc        : Copy ticket description to clipboard\n")
-	b.WriteString("• /copyai          : Copy ticket context for AI prompting\n")
+	b.WriteString("• /copy title      : Copy ticket title to clipboard\n")
+	b.WriteString("• /copy desc       : Copy ticket description to clipboard\n")
+	b.WriteString("• /copy checklist  : Copy ticket checklists to clipboard\n")
+	b.WriteString("• /copy all        : Copy ticket context for AI prompting\n")
 	b.WriteString("• /editext         : Edit description in external $EDITOR\n")
 	b.WriteString("• /subtask         : Create a new subtask\n")
 	b.WriteString("• /checklist add <name>                    : Create a checklist\n")
@@ -604,7 +608,6 @@ func (m *AppModel) updateHelpContent() {
 	b.WriteString("• T                : Edit title\n")
 	b.WriteString("• e                : Edit description (inline)\n")
 	b.WriteString("• E                : Edit description in external $EDITOR\n")
-	b.WriteString("• D                : Copy ticket description\n")
 	b.WriteString("• A                : Copy ticket context for AI prompting\n")
 	b.WriteString("• t                : Create a new subtask\n")
 	b.WriteString("• s                : Copy ticket URL to clipboard\n")
@@ -912,7 +915,7 @@ func (m *AppModel) View() string {
 		}
 		mainContent = view
 	case stateTaskDetail:
-		hint := lipgloss.NewStyle().Foreground(ColorSubtext).Render("q: back • a/n: new task • c: comment • T: edit title • e: edit desc • E: vim edit • D: copy desc • t: subtask • o: open • s: copy • r: refresh")
+		hint := lipgloss.NewStyle().Foreground(ColorSubtext).Render("q: back • a/n: new task • c: comment • T: edit title • e: edit desc • E: vim edit • t: subtask • o: open • s: copy • r: refresh")
 		mainContent = m.vp.View() + "\n" + hint
 	case stateChecklist:
 		mainContent = lipgloss.Place(m.width, m.height-8, lipgloss.Left, lipgloss.Top, m.renderChecklistView()+"\n\n"+m.checklistEditInput.View(), lipgloss.WithWhitespaceChars(" "))
@@ -1006,7 +1009,33 @@ func (m *AppModel) View() string {
 	var sb strings.Builder
 	if m.state == stateCommand && len(m.filteredSuggest) > 0 {
 		sb.WriteString("\n")
-		for i, s := range m.filteredSuggest {
+		
+		startIdx := 0
+		endIdx := len(m.filteredSuggest)
+		hasMoreItems := len(m.filteredSuggest) > 10
+		
+		if hasMoreItems {
+			startIdx = m.suggestIdx - 4
+			if startIdx < 0 {
+				startIdx = 0
+			}
+			endIdx = startIdx + 10
+			if endIdx > len(m.filteredSuggest) {
+				endIdx = len(m.filteredSuggest)
+				startIdx = endIdx - 10
+			}
+		}
+
+		if hasMoreItems {
+			if startIdx > 0 {
+				sb.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext).Render("▲") + "\n")
+			} else {
+				sb.WriteString("\n")
+			}
+		}
+
+		for i := startIdx; i < endIdx; i++ {
+			s := m.filteredSuggest[i]
 			textStyle := lipgloss.NewStyle().Width(35).Foreground(ColorPrimary).Bold(i == m.suggestIdx)
 			descStyle := lipgloss.NewStyle().Foreground(ColorText).PaddingLeft(2)
 
@@ -1020,8 +1049,16 @@ func (m *AppModel) View() string {
 			sb.WriteString(textStyle.Render(s.Text))
 			sb.WriteString(descStyle.Render(s.Desc))
 
-			if i < len(m.filteredSuggest)-1 {
+			if i < endIdx-1 || hasMoreItems {
 				sb.WriteString("\n")
+			}
+		}
+
+		if hasMoreItems {
+			if endIdx < len(m.filteredSuggest) {
+				sb.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext).Render("▼"))
+			} else {
+				sb.WriteString(" ")
 			}
 		}
 	}
