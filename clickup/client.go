@@ -184,11 +184,13 @@ type Attachment struct {
 }
 
 type ChecklistItem struct {
-	ID       string          `json:"id"`
-	Name     string          `json:"name"`
-	Resolved bool            `json:"resolved"`
-	Parent   *string         `json:"parent,omitempty"`
-	Children []ChecklistItem `json:"children,omitempty"`
+	ID          string          `json:"id"`
+	Name        string          `json:"name"`
+	Resolved    bool            `json:"resolved"`
+	OrderIndex  *int            `json:"orderindex"`
+	DateCreated string          `json:"date_created"`
+	Parent      *string         `json:"parent,omitempty"`
+	Children    []ChecklistItem `json:"children,omitempty"`
 }
 
 type Checklist struct {

@@ -337,18 +337,51 @@ func (m *AppModel) getSubtasks(parentID string) []clickup.Task {
 	return res
 }
 
-func (m *AppModel) flattenChecklists() {
-	m.checklistViewItems = nil
-	for _, cl := range m.selectedTask.Checklists {
-		m.checklistViewItems = append(m.checklistViewItems, checklistViewItem{
+func buildChecklistViewItems(checklists []clickup.Checklist) []checklistViewItem {
+	var viewItems []checklistViewItem
+	for _, cl := range checklists {
+		viewItems = append(viewItems, checklistViewItem{
 			itemType:  checklistTypeHeader,
 			checklist: cl,
 		})
 
-		var topLevel []clickup.ChecklistItem
-		childrenMap := make(map[string][]clickup.ChecklistItem)
+		itemByID := make(map[string]clickup.ChecklistItem, len(cl.Items))
+		sourceOrder := make(map[string]int, len(cl.Items))
+		nextSourceOrder := 0
 
 		for _, item := range cl.Items {
+			itemByID[item.ID] = item
+			sourceOrder[item.ID] = nextSourceOrder
+			nextSourceOrder++
+		}
+
+		var collectChildren func(parentID string, children []clickup.ChecklistItem)
+		collectChildren = func(parentID string, children []clickup.ChecklistItem) {
+			for _, child := range children {
+				if _, ok := itemByID[child.ID]; !ok {
+					if child.Parent == nil || *child.Parent == "" {
+						inferredParentID := parentID
+						child.Parent = &inferredParentID
+					}
+					itemByID[child.ID] = child
+					sourceOrder[child.ID] = nextSourceOrder
+					nextSourceOrder++
+				}
+				if len(child.Children) > 0 {
+					collectChildren(child.ID, child.Children)
+				}
+			}
+		}
+		for _, item := range cl.Items {
+			if len(item.Children) > 0 {
+				collectChildren(item.ID, item.Children)
+			}
+		}
+
+		var topLevel []clickup.ChecklistItem
+		childrenMap := make(map[string][]clickup.ChecklistItem, len(itemByID))
+
+		for _, item := range itemByID {
 			if item.Parent != nil && *item.Parent != "" {
 				childrenMap[*item.Parent] = append(childrenMap[*item.Parent], item)
 			} else {
@@ -356,11 +389,27 @@ func (m *AppModel) flattenChecklists() {
 			}
 		}
 
+		sortChecklistItems := func(items []clickup.ChecklistItem) {
+			sort.SliceStable(items, func(i, j int) bool {
+				if items[i].DateCreated != "" && items[j].DateCreated != "" && items[i].DateCreated != items[j].DateCreated {
+					return items[i].DateCreated < items[j].DateCreated
+				}
+				if items[i].OrderIndex != nil && items[j].OrderIndex != nil && *items[i].OrderIndex != *items[j].OrderIndex {
+					return *items[i].OrderIndex < *items[j].OrderIndex
+				}
+				return sourceOrder[items[i].ID] < sourceOrder[items[j].ID]
+			})
+		}
+		sortChecklistItems(topLevel)
+		for parentID := range childrenMap {
+			sortChecklistItems(childrenMap[parentID])
+		}
+
 		var traverse func(items []clickup.ChecklistItem, depth int)
 		itemIndex := 0
 		traverse = func(items []clickup.ChecklistItem, depth int) {
 			for _, item := range items {
-				m.checklistViewItems = append(m.checklistViewItems, checklistViewItem{
+				viewItems = append(viewItems, checklistViewItem{
 					itemType:  checklistTypeItem,
 					checklist: cl,
 					item:      item,
@@ -371,13 +420,16 @@ func (m *AppModel) flattenChecklists() {
 
 				if children, ok := childrenMap[item.ID]; ok {
 					traverse(children, depth+1)
-				} else if len(item.Children) > 0 {
-					traverse(item.Children, depth+1)
 				}
 			}
 		}
 		traverse(topLevel, 0)
 	}
+	return viewItems
+}
+
+func (m *AppModel) flattenChecklists() {
+	m.checklistViewItems = buildChecklistViewItems(m.selectedTask.Checklists)
 	if m.checklistSelectedIdx >= len(m.checklistViewItems) {
 		m.checklistSelectedIdx = 0
 	}

@@ -660,19 +660,29 @@ func (m *AppModel) updateViewportContent() {
 	b.WriteString(divider + "\n\n")
 	b.WriteString(SectionHeaderStyle.Render("CHECKLISTS") + "\n")
 	if len(m.selectedTask.Checklists) > 0 {
-		for i, cl := range m.selectedTask.Checklists {
-			b.WriteString(fmt.Sprintf("%d. %s\n", i+1, cl.Name))
-			if len(cl.Items) == 0 {
-				b.WriteString("   " + lipgloss.NewStyle().Foreground(ColorSubtext).Render("No items.") + "\n")
+		checklistViewItems := buildChecklistViewItems(m.selectedTask.Checklists)
+		currentChecklistNumber := 0
+		renderedItemsForChecklist := 0
+		for idx, viewItem := range checklistViewItems {
+			if viewItem.itemType == checklistTypeHeader {
+				if currentChecklistNumber > 0 && renderedItemsForChecklist == 0 {
+					b.WriteString("   " + lipgloss.NewStyle().Foreground(ColorSubtext).Render("No items.") + "\n")
+				}
+				currentChecklistNumber++
+				renderedItemsForChecklist = 0
+				b.WriteString(fmt.Sprintf("%d. %s\n", currentChecklistNumber, viewItem.checklist.Name))
+				if idx == len(checklistViewItems)-1 {
+					b.WriteString("   " + lipgloss.NewStyle().Foreground(ColorSubtext).Render("No items.") + "\n")
+				}
 				continue
 			}
-			for j, item := range cl.Items {
-				marker := "[ ]"
-				if item.Resolved {
-					marker = "[x]"
-				}
-				b.WriteString(fmt.Sprintf("   %d.%d %s %s\n", i+1, j+1, marker, item.Name))
+			marker := "[ ]"
+			if viewItem.item.Resolved {
+				marker = "[x]"
 			}
+			padding := strings.Repeat("  ", viewItem.depth)
+			b.WriteString(fmt.Sprintf("   %d.%d %s%s %s\n", currentChecklistNumber, viewItem.itemIndex+1, padding, marker, viewItem.item.Name))
+			renderedItemsForChecklist++
 		}
 	} else {
 		b.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext).Render("No checklists."))

@@ -1311,7 +1311,7 @@ func (m *AppModel) updateChecklist(msg tea.Msg) (tea.Model, tea.Cmd) {
 							item := editingItem.item
 							checklist := editingItem.checklist
 							return m, tea.Batch(m.spinner.Tick, func() tea.Msg {
-								if err := m.client.UpdateChecklistItem(checklist.ID, item.ID, newValue, item.Resolved, nil); err != nil {
+								if err := m.client.UpdateChecklistItem(checklist.ID, item.ID, newValue, item.Resolved, item.Parent); err != nil {
 									return errMsg(err)
 								}
 								return checklistItemUpdatedMsg{}
@@ -1439,7 +1439,7 @@ func (m *AppModel) updateChecklist(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.loadingMsg = "Toggling..."
 					checklist := item.checklist
 					return m, tea.Batch(m.spinner.Tick, func() tea.Msg {
-						if err := m.client.UpdateChecklistItem(checklist.ID, item.item.ID, item.item.Name, !item.item.Resolved, nil); err != nil {
+						if err := m.client.UpdateChecklistItem(checklist.ID, item.item.ID, item.item.Name, !item.item.Resolved, item.item.Parent); err != nil {
 							return errMsg(err)
 						}
 						return checklistItemUpdatedMsg{}
@@ -2207,7 +2207,7 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 									m.loading = true
 									m.loadingMsg = "Renaming checklist item..."
 									return m, tea.Batch(m.spinner.Tick, func() tea.Msg {
-										if err := m.client.UpdateChecklistItem(checklist.ID, item.ID, name, item.Resolved, nil); err != nil {
+										if err := m.client.UpdateChecklistItem(checklist.ID, item.ID, name, item.Resolved, item.Parent); err != nil {
 											return errMsg(err)
 										}
 										return refreshTaskDetailCmd(m.client, m.selectedTask.ID, m.selectedTeam, m.detailBackState)()
@@ -2216,7 +2216,7 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 									m.loading = true
 									m.loadingMsg = "Updating checklist item..."
 									return m, tea.Batch(m.spinner.Tick, func() tea.Msg {
-										if err := m.client.UpdateChecklistItem(checklist.ID, item.ID, item.Name, !item.Resolved, nil); err != nil {
+										if err := m.client.UpdateChecklistItem(checklist.ID, item.ID, item.Name, !item.Resolved, item.Parent); err != nil {
 											return errMsg(err)
 										}
 										return refreshTaskDetailCmd(m.client, m.selectedTask.ID, m.selectedTeam, m.detailBackState)()
