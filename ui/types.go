@@ -36,6 +36,8 @@ const (
 	stateChecklist
 	stateConfirmChecklistDelete
 	stateConfirmSpaceDelete
+	stateCommentsView
+	stateConfirmCommentDelete
 )
 
 type checklistItemType int
@@ -105,6 +107,8 @@ type AppModel struct {
 	popupMsg   string
 
 	selectedComments          []clickup.Comment
+	commentSelectedIdx        int
+	commentReturnState        state
 	editingCommentID          string
 	replyToCommentID          string
 	replyToUser               string

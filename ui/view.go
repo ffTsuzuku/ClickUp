@@ -183,6 +183,95 @@ func (m *AppModel) renderConfirmChecklistDelete() string {
 	b.WriteString(fmt.Sprintf("Delete '%s' and all its items?", m.checklistPendingDelete.Name))
 	b.WriteString("\n\n")
 	b.WriteString(lipgloss.NewStyle().Foreground(ColorPrimary).Render("[y] Delete  "))
+	return b.String()
+}
+
+func (m *AppModel) renderCommentsView() string {
+	var b strings.Builder
+
+	if len(m.selectedComments) == 0 {
+		b.WriteString(TitleStyle.Render("Comments"))
+		b.WriteString("\n\n")
+		b.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext).Render("No comments. Press 'c' to create one."))
+		b.WriteString("\n\n")
+		b.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext).Italic(true).Render("Press C or Esc to go back"))
+		return b.String()
+	}
+
+	b.WriteString(TitleStyle.Render(fmt.Sprintf("Comments (%d)", len(m.selectedComments))))
+	b.WriteString("\n\n")
+
+	commentWidth := m.width - 4
+	if commentWidth < 24 {
+		commentWidth = 24
+	}
+
+	for i, c := range m.selectedComments {
+		isSelected := i == m.commentSelectedIdx
+
+		authorName := c.User.Username
+		if authorName == "" {
+			authorName = "Unknown"
+		}
+
+		headerColor := ColorSecondary
+		if isSelected {
+			headerColor = ColorPrimary
+		}
+
+		header := lipgloss.JoinHorizontal(
+			lipgloss.Top,
+			lipgloss.NewStyle().Foreground(headerColor).Bold(true).Render(fmt.Sprintf("ID: %d", i+1)),
+			" ",
+			lipgloss.NewStyle().Foreground(ColorSecondary).Bold(true).Render(authorName),
+			" ",
+			lipgloss.NewStyle().Foreground(ColorSubtext).Render(formatClickUpTimestamp(c.Date)),
+		)
+
+		message := strings.TrimSpace(c.CommentText)
+		if message == "" {
+			message = lipgloss.NewStyle().Foreground(ColorSubtext).Italic(true).Render("No comment text.")
+		}
+
+		cardDivider := lipgloss.NewStyle().
+			Foreground(ColorBorder).
+			Render(strings.Repeat("─", max(8, commentWidth-4)))
+
+		borderColor := ColorBorder
+		if isSelected {
+			borderColor = ColorPrimary
+		}
+
+		commentStyle := lipgloss.NewStyle().
+			Border(lipgloss.NormalBorder()).
+			BorderForeground(borderColor).
+			Padding(0, 1).
+			Width(commentWidth)
+
+		if c.Parent != nil && *c.Parent != "" {
+			commentStyle = commentStyle.MarginLeft(2)
+		}
+
+		b.WriteString(commentStyle.Render(header + "\n" + cardDivider + "\n" + message))
+		b.WriteString("\n\n")
+	}
+
+	b.WriteString("\n")
+	b.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext).Italic(true).Render("↑↓ Navigate | c Add | r Reply | e Edit | d Delete | q Back"))
+
+	return b.String()
+}
+
+func (m *AppModel) renderConfirmCommentDelete() string {
+	var b strings.Builder
+	b.WriteString(TitleStyle.Render("Delete Comment?"))
+	b.WriteString("\n\n")
+	if m.commentSelectedIdx >= 0 && m.commentSelectedIdx < len(m.selectedComments) {
+		b.WriteString("Are you sure you want to delete comment ID: " + fmt.Sprintf("%d", m.commentSelectedIdx+1) + "?\n\n")
+		b.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext).Render(m.selectedComments[m.commentSelectedIdx].CommentText))
+		b.WriteString("\n\n")
+	}
+	b.WriteString(lipgloss.NewStyle().Foreground(ColorPrimary).Render("[y] Delete  "))
 	b.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext).Render("[n] Cancel"))
 	return b.String()
 }
@@ -270,18 +359,18 @@ func (m *AppModel) updateCommandSuggestions() {
 		sugs = append(sugs, Suggestion{"/share", "Copy ticket URL to clipboard"})
 		sugs = append(sugs, Suggestion{"/delete", "Delete this ticket permanently"})
 		sugs = append(sugs, Suggestion{"/move", "Move this ticket to another list"})
-		sugs = append(sugs, Suggestion{"/assign ", "Change assignee (e.g. /assign deep)"})
-		sugs = append(sugs, Suggestion{"/title", "Edit the ticket title"})
-		sugs = append(sugs, Suggestion{"/desc", "Edit the ticket description (inline)"})
+		sugs = append(sugs, Suggestion{"/edit title", "Edit the ticket title"})
+		sugs = append(sugs, Suggestion{"/edit desc", "Edit the ticket description (inline)"})
+		sugs = append(sugs, Suggestion{"/edit desc externally", "Edit description in $EDITOR (vim etc)"})
 		sugs = append(sugs, Suggestion{"/copy title", "Copy the ticket title to your clipboard"})
 		sugs = append(sugs, Suggestion{"/copy desc", "Copy the ticket description to your clipboard"})
 		sugs = append(sugs, Suggestion{"/copy checklist", "Copy the ticket checklists to your clipboard"})
 		sugs = append(sugs, Suggestion{"/copy all", "Copy the ticket context for AI prompting to your clipboard"})
-		sugs = append(sugs, Suggestion{"/editext", "Edit description in $EDITOR (vim etc)"})
 		sugs = append(sugs, Suggestion{"/subtask", "Add a subtask to this ticket"})
 		sugs = append(sugs, Suggestion{"/checklist", "Manage checklists"})
 		sugs = append(sugs, Suggestion{"/checklist add ", "Create a checklist (or use 'n' in checklist view)"})
 		sugs = append(sugs, Suggestion{"L", "Open checklist view (when viewing task)"})
+		sugs = append(sugs, Suggestion{"C", "Open comments view (when viewing task)"})
 		sugs = append(sugs, Suggestion{"/attach", "Manage attachments"})
 		sugs = append(sugs, Suggestion{"/attach open ", "Open an attachment preview in your browser by number (e.g. /attach open 1)"})
 		sugs = append(sugs, Suggestion{"/attach download ", "Download an attachment by number (e.g. /attach download 1)"})
@@ -490,49 +579,10 @@ func (m *AppModel) updateViewportContent() {
 
 	b.WriteString(divider + "\n\n")
 	b.WriteString(SectionHeaderStyle.Render("COMMENTS") + "\n")
-	if len(m.selectedComments) > 0 {
-		commentWidth := m.width - 18
-		if commentWidth < 24 {
-			commentWidth = 24
-		}
-
-		for i, c := range m.selectedComments {
-			authorName := c.User.Username
-			if authorName == "" {
-				authorName = "Unknown"
-			}
-
-			header := lipgloss.JoinHorizontal(
-				lipgloss.Top,
-				lipgloss.NewStyle().Foreground(ColorPrimary).Bold(true).Render(fmt.Sprintf("ID: %d", i+1)),
-				" ",
-				lipgloss.NewStyle().Foreground(ColorSecondary).Bold(true).Render(authorName),
-				" ",
-				lipgloss.NewStyle().Foreground(ColorSubtext).Render(formatClickUpTimestamp(c.Date)),
-			)
-
-			message := strings.TrimSpace(c.CommentText)
-			if message == "" {
-				message = lipgloss.NewStyle().Foreground(ColorSubtext).Italic(true).Render("No comment text.")
-			}
-
-			cardDivider := lipgloss.NewStyle().
-				Foreground(ColorBorder).
-				Render(strings.Repeat("─", max(8, commentWidth-4)))
-
-			commentStyle := lipgloss.NewStyle().
-				Border(lipgloss.NormalBorder()).
-				BorderForeground(ColorBorder).
-				Padding(0, 1).
-				Width(commentWidth)
-
-			if c.Parent != nil && *c.Parent != "" {
-				commentStyle = commentStyle.MarginLeft(2)
-			}
-
-			b.WriteString(commentStyle.Render(header + "\n" + cardDivider + "\n" + message))
-			b.WriteString("\n")
-		}
+	
+	count := len(m.selectedComments)
+	if count > 0 {
+		b.WriteString(fmt.Sprintf("%d comment(s). Press 'C' to open Comments View to read and manage them.\n", count))
 	} else {
 		b.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext).Render("No comments."))
 	}
@@ -584,14 +634,13 @@ func (m *AppModel) updateHelpContent() {
 	b.WriteString("• /share           : Copy ticket URL to clipboard\n")
 	b.WriteString("• /delete          : Delete this ticket permanently\n")
 	b.WriteString("• /move            : Move this ticket to another list\n")
-	b.WriteString("• /assign <user>   : Assign the ticket to a user\n")
-	b.WriteString("• /title           : Edit the ticket title\n")
-	b.WriteString("• /desc            : Edit description (inline)\n")
+	b.WriteString("• /edit title      : Edit the ticket title\n")
+	b.WriteString("• /edit desc       : Edit description (inline)\n")
+	b.WriteString("• /edit desc externally : Edit description in external $EDITOR\n")
 	b.WriteString("• /copy title      : Copy ticket title to clipboard\n")
 	b.WriteString("• /copy desc       : Copy ticket description to clipboard\n")
 	b.WriteString("• /copy checklist  : Copy ticket checklists to clipboard\n")
 	b.WriteString("• /copy all        : Copy ticket context for AI prompting\n")
-	b.WriteString("• /editext         : Edit description in external $EDITOR\n")
 	b.WriteString("• /subtask         : Create a new subtask\n")
 	b.WriteString("• /checklist add <name>                    : Create a checklist\n")
 	b.WriteString("• /checklist rename <checklist> <name>     : Rename a checklist by number\n")
@@ -605,14 +654,12 @@ func (m *AppModel) updateHelpContent() {
 	b.WriteString("• /attach share <n>    : Copy attachment URL\n")
 	b.WriteString("• /attach upload        : Open a file browser to upload an attachment\n")
 	b.WriteString("• c                : Add a comment\n")
-	b.WriteString("• T                : Edit title\n")
-	b.WriteString("• e                : Edit description (inline)\n")
-	b.WriteString("• E                : Edit description in external $EDITOR\n")
 	b.WriteString("• A                : Copy ticket context for AI prompting\n")
 	b.WriteString("• t                : Create a new subtask\n")
 	b.WriteString("• s                : Copy ticket URL to clipboard\n")
 	b.WriteString("• r                : Refresh current view from API\n")
 	b.WriteString("• L                : Open checklist view\n")
+	b.WriteString("• C                : Open comments view\n")
 	b.WriteString("• ↑↓/jk            : Navigate checklist items\n")
 	b.WriteString("• Space            : Toggle item complete\n")
 	b.WriteString("• Enter            : Edit item name\n")
@@ -803,6 +850,10 @@ func (m *AppModel) breadcrumb() string {
 			parts = append(parts, "List: "+name)
 		}
 		parts = append(parts, "New Task")
+	case stateCommentsView:
+		parts = append(parts, "Comments")
+	case stateConfirmCommentDelete:
+		parts = append(parts, "Comments", "Delete Comment")
 	case stateMovePicker:
 		parts = append(parts, "Workspaces")
 		if name := m.selectedTeamName(); name != "" {
@@ -915,12 +966,16 @@ func (m *AppModel) View() string {
 		}
 		mainContent = view
 	case stateTaskDetail:
-		hint := lipgloss.NewStyle().Foreground(ColorSubtext).Render("q: back • a/n: new task • c: comment • T: edit title • e: edit desc • E: vim edit • t: subtask • o: open • s: copy • r: refresh")
+		hint := lipgloss.NewStyle().Foreground(ColorSubtext).Render("q: back • a/n: new task • c: comment • t: subtask • o: open • s: copy • r: refresh")
 		mainContent = m.vp.View() + "\n" + hint
 	case stateChecklist:
 		mainContent = lipgloss.Place(m.width, m.height-8, lipgloss.Left, lipgloss.Top, m.renderChecklistView()+"\n\n"+m.checklistEditInput.View(), lipgloss.WithWhitespaceChars(" "))
 	case stateConfirmChecklistDelete:
 		mainContent = lipgloss.Place(m.width, m.height-8, lipgloss.Center, lipgloss.Center, m.renderConfirmChecklistDelete())
+	case stateCommentsView:
+		mainContent = lipgloss.Place(m.width, m.height-8, lipgloss.Left, lipgloss.Top, m.renderCommentsView(), lipgloss.WithWhitespaceChars(" "))
+	case stateConfirmCommentDelete:
+		mainContent = lipgloss.Place(m.width, m.height-8, lipgloss.Center, lipgloss.Center, m.renderConfirmCommentDelete())
 	case stateHelp:
 		mainContent = m.vp.View()
 	case stateComment:
@@ -928,7 +983,11 @@ func (m *AppModel) View() string {
 		if m.replyToUser != "" {
 			header = TitleStyle.Render(fmt.Sprintf("Replying to %s:", m.replyToUser))
 		}
-		mainContent = m.vp.View() + "\n\n" + header + "\n" + m.commentInput.View() + "\n(Ctrl+S to submit, Ctrl+E for Vim, Esc to cancel)"
+		bg := m.vp.View()
+		if m.commentReturnState == stateCommentsView {
+			bg = m.renderCommentsView()
+		}
+		mainContent = bg + "\n\n" + header + "\n" + m.commentInput.View() + "\n(Ctrl+S to submit, Ctrl+E for Vim, Esc to cancel)"
 	case stateCreateTask:
 		mainContent = m.activeList.View() + "\n\n" + lipgloss.NewStyle().Bold(true).Render("New Task: ") + m.taskInput.View() + "\n" + lipgloss.NewStyle().Foreground(ColorSubtext).Render("Enter to create | Esc to cancel")
 	case stateCreateSubtask:
@@ -953,7 +1012,11 @@ func (m *AppModel) View() string {
 	case stateEditDesc:
 		mainContent = m.renderEditDesc()
 	case stateEditComment:
-		mainContent = m.vp.View() + "\n\n" + TitleStyle.Render("Editing Comment:") + "\n" + m.commentInput.View() + "\n(Ctrl+S to save, Ctrl+E for Vim, Esc to cancel)"
+		bg := m.vp.View()
+		if m.commentReturnState == stateCommentsView {
+			bg = m.renderCommentsView()
+		}
+		mainContent = bg + "\n\n" + TitleStyle.Render("Editing Comment:") + "\n" + m.commentInput.View() + "\n(Ctrl+S to save, Ctrl+E for Vim, Esc to cancel)"
 	case stateConfirmProfileDelete:
 		box := lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
@@ -1036,7 +1099,7 @@ func (m *AppModel) View() string {
 
 		for i := startIdx; i < endIdx; i++ {
 			s := m.filteredSuggest[i]
-			textStyle := lipgloss.NewStyle().Width(35).Foreground(ColorPrimary).Bold(i == m.suggestIdx)
+			textStyle := lipgloss.NewStyle().Width(50).Foreground(ColorPrimary).Bold(i == m.suggestIdx)
 			descStyle := lipgloss.NewStyle().Foreground(ColorText).PaddingLeft(2)
 
 			if i == m.suggestIdx {

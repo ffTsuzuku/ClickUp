@@ -326,13 +326,18 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.externalEditTarget = ""
-		m.state = stateTaskDetail
+		if m.state == stateComment || m.state == stateEditComment {
+			m.state = m.commentReturnState
+		} else {
+			m.state = stateTaskDetail
+		}
 		m.updateViewportContent()
 		return m, tea.Batch(cmds...)
 	case commentAddedMsg:
 		m.replyToCommentID = ""
 		m.replyToUser = ""
 		m.popupMsg = "Comment added!"
+		m.state = m.commentReturnState
 		return m, tea.Batch(
 			fetchCommentsCmd(m.client, m.selectedTask.ID),
 			tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} }),
@@ -433,6 +438,10 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateChecklist(msg)
 	case stateConfirmChecklistDelete:
 		return m.updateConfirmChecklistDelete(msg)
+	case stateCommentsView:
+		return m.updateCommentsView(msg)
+	case stateConfirmCommentDelete:
+		return m.updateConfirmCommentDelete(msg)
 	case stateConfirmProfileDelete:
 		return m.updateConfirmProfileDelete(msg)
 	case stateConfirmListDelete:
@@ -655,25 +664,10 @@ func (m *AppModel) updateDetail(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "c":
+			m.commentReturnState = m.state
 			m.state = stateComment
 			m.commentInput.Focus()
 			return m, textinput.Blink
-		case "T":
-			m.state = stateEditTitle
-			m.taskInput.SetValue(m.selectedTask.Name)
-			m.taskInput.Focus()
-			m.taskInput.SetCursor(len(m.taskInput.Value()))
-			return m, textinput.Blink
-		case "e":
-			m.state = stateEditDesc
-			m.descInput.SetValue(m.editableDescription())
-			m.refreshEditDescLayout()
-			m.descInput.Focus()
-			return m, textarea.Blink
-		case "E":
-
-			m.externalEditTarget = "description"
-			return m, openExternalEditorCmd(m.editableDescription())
 		case "A":
 			return m, m.copyTaskForAI()
 		case "t":
@@ -724,6 +718,10 @@ func (m *AppModel) updateDetail(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.popupMsg = "No checklists on this task. Press 'n' from command mode to create one."
 			return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+		case "C":
+			m.commentSelectedIdx = 0
+			m.state = stateCommentsView
+			return m, nil
 		}
 	}
 	var cmd tea.Cmd
@@ -751,7 +749,7 @@ func (m *AppModel) updateComment(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "esc":
 			m.commentInput.SetValue("")
 			m.commentInput.Blur()
-			m.state = stateTaskDetail
+			m.state = m.commentReturnState
 			return m, nil
 		}
 	}
@@ -770,7 +768,7 @@ func (m *AppModel) updateEditComment(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if v != "" {
 				m.commentInput.SetValue("")
 				m.commentInput.Blur()
-				m.state = stateTaskDetail
+				m.state = m.commentReturnState
 				m.popupMsg = "Updating comment..."
 				return m, tea.Batch(m.spinner.Tick, editCommentCmd(m.client, m.editingCommentID, v))
 			}
@@ -781,7 +779,7 @@ func (m *AppModel) updateEditComment(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "esc":
 			m.commentInput.SetValue("")
 			m.commentInput.Blur()
-			m.state = stateTaskDetail
+			m.state = m.commentReturnState
 			return m, nil
 		}
 	}
@@ -1358,6 +1356,76 @@ func (m *AppModel) updateChecklist(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+func (m *AppModel) updateCommentsView(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "up", "k":
+			if m.commentSelectedIdx > 0 {
+				m.commentSelectedIdx--
+			}
+		case "down", "j":
+			if m.commentSelectedIdx < len(m.selectedComments)-1 {
+				m.commentSelectedIdx++
+			}
+		case "c":
+			m.commentReturnState = m.state
+			m.state = stateComment
+			m.commentInput.Focus()
+			return m, textinput.Blink
+		case "r":
+			if len(m.selectedComments) > 0 && m.commentSelectedIdx >= 0 {
+				c := m.selectedComments[m.commentSelectedIdx]
+				m.replyToCommentID = c.ID
+				m.replyToUser = c.User.Username
+				m.commentReturnState = m.state
+				m.state = stateComment
+				m.commentInput.Focus()
+				return m, textinput.Blink
+			}
+		case "e":
+			if len(m.selectedComments) > 0 && m.commentSelectedIdx >= 0 {
+				c := m.selectedComments[m.commentSelectedIdx]
+				m.editingCommentID = c.ID
+				m.commentInput.SetValue(c.CommentText)
+				m.commentInput.Focus()
+				m.commentReturnState = m.state
+				m.state = stateEditComment
+				return m, textinput.Blink
+			}
+		case "d":
+			if len(m.selectedComments) > 0 && m.commentSelectedIdx >= 0 {
+				m.state = stateConfirmCommentDelete
+				return m, nil
+			}
+		case "esc", "q", "left":
+			m.state = stateTaskDetail
+			return m, nil
+		}
+	}
+	return m, nil
+}
+
+func (m *AppModel) updateConfirmCommentDelete(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch strings.ToLower(msg.String()) {
+		case "y":
+			if m.commentSelectedIdx >= 0 && m.commentSelectedIdx < len(m.selectedComments) {
+				c := m.selectedComments[m.commentSelectedIdx]
+				m.loading = true
+				m.loadingMsg = "Deleting comment..."
+				m.state = stateCommentsView
+				return m, tea.Batch(m.spinner.Tick, deleteCommentCmd(m.client, c.ID))
+			}
+		case "n", "esc", "q":
+			m.state = stateCommentsView
+			return m, nil
+		}
+	}
+	return m, nil
+}
+
 func (m *AppModel) updateConfirmChecklistDelete(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
@@ -1765,21 +1833,28 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.loadingMsg = "Loading available lists..."
 					return m, tea.Batch(m.spinner.Tick, fetchAllListsForMoveCmd(m.client, m.selectedSpace))
 				}
-			} else if strings.HasPrefix(val, "/desc") {
+			} else if strings.HasPrefix(val, "/edit ") {
 				if m.prevState == stateTaskDetail {
-					m.state = stateEditDesc
-					m.descInput.SetValue(m.editableDescription())
-					m.refreshEditDescLayout()
-					m.descInput.Focus()
-					return m, textarea.Blink
-				}
-			} else if strings.HasPrefix(val, "/title") {
-				if m.prevState == stateTaskDetail {
-					m.state = stateEditTitle
-					m.taskInput.SetValue(m.selectedTask.Name)
-					m.taskInput.Focus()
-					m.taskInput.SetCursor(len(m.taskInput.Value()))
-					return m, textinput.Blink
+					target := strings.ToLower(strings.TrimPrefix(val, "/edit "))
+					switch target {
+					case "title":
+						m.state = stateEditTitle
+						m.taskInput.SetValue(m.selectedTask.Name)
+						m.taskInput.Focus()
+						m.taskInput.SetCursor(len(m.taskInput.Value()))
+						return m, textinput.Blink
+					case "desc":
+						m.state = stateEditDesc
+						m.descInput.SetValue(m.editableDescription())
+						m.refreshEditDescLayout()
+						m.descInput.Focus()
+						return m, textarea.Blink
+					case "desc externally":
+						m.externalEditTarget = "description"
+						return m, openExternalEditorCmd(m.editableDescription())
+					}
+					m.popupMsg = "Unknown /edit command. Use /edit [title|desc|desc externally]"
+					return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
 				}
 			} else if strings.HasPrefix(val, "/copy ") {
 				if m.prevState == stateTaskDetail {
@@ -1799,11 +1874,6 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					m.popupMsg = "Unknown /copy command. Use /copy [title|desc|checklist|all]"
 					return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
-				}
-			} else if strings.HasPrefix(val, "/editext") {
-				if m.prevState == stateTaskDetail {
-					m.externalEditTarget = "description"
-					return m, openExternalEditorCmd(m.editableDescription())
 				}
 			} else if strings.HasPrefix(val, "/subtask") {
 				if m.prevState == stateTaskDetail {
