@@ -35,6 +35,7 @@ const (
 	stateFilePicker
 	stateChecklist
 	stateConfirmChecklistDelete
+	stateConfirmSpaceDelete
 )
 
 type checklistItemType int
@@ -111,6 +112,8 @@ type AppModel struct {
 	pendingDeleteListID       string
 	pendingDeleteListName     string
 	pendingDeleteListFolderID string
+	pendingDeleteSpaceID      string
+	pendingDeleteSpaceName    string
 	filePickerPath            string
 	filePickerShowHidden      bool
 	externalEditTarget        string

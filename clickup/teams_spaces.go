@@ -102,6 +102,12 @@ func (c *Client) UpdateSpace(spaceID, name string) (*Space, error) {
 	return &space, nil
 }
 
+func (c *Client) DeleteSpace(spaceID string) error {
+	endpoint := fmt.Sprintf("/space/%s", spaceID)
+	_, err := c.doReq("DELETE", endpoint, nil)
+	return err
+}
+
 func (c *Client) CreateList(folderID, name string) (*List, error) {
 	endpoint := fmt.Sprintf("/folder/%s/list", folderID)
 	reqBody := map[string]interface{}{"name": name}

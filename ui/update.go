@@ -191,6 +191,21 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.activeList = &m.spacesList
 		m.popupMsg = "Renamed space to " + msg.Name
 		return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+	case spaceDeletedMsg:
+		m.loading = false
+		m.allSpaces = msg.Spaces
+		m.selectedSpace = ""
+		m.pendingDeleteSpaceID = ""
+		m.pendingDeleteSpaceName = ""
+		var items []list.Item
+		for _, s := range msg.Spaces {
+			items = append(items, spaceItem(s))
+		}
+		m.spacesList.SetItems(items)
+		m.state = stateSpaces
+		m.activeList = &m.spacesList
+		m.popupMsg = "Deleted space " + msg.Name
+		return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
 	case listCreatedMsg:
 		m.loading = false
 		m.allFolders = msg.Hierarchy.Folders
@@ -422,6 +437,8 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateConfirmProfileDelete(msg)
 	case stateConfirmListDelete:
 		return m.updateConfirmListDelete(msg)
+	case stateConfirmSpaceDelete:
+		return m.updateConfirmSpaceDelete(msg)
 	case stateConfirmDiscardDesc:
 		return m.updateConfirmDiscardDesc(msg)
 	}
@@ -483,6 +500,39 @@ func (m *AppModel) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.taskInput.SetValue("")
 				m.taskInput.Focus()
 				return m, textinput.Blink
+			} else if m.state == stateSpaces {
+				m.prevState = stateSpaces
+				m.state = stateCommand
+				m.cmdInput.Focus()
+				m.cmdInput.SetValue("/space create ")
+				m.cmdInput.SetCursor(len(m.cmdInput.Value()))
+				m.updateCommandSuggestions()
+				m.updateLayout()
+				return m, textinput.Blink
+			}
+		case "e":
+			if m.state == stateSpaces {
+				m.prevState = stateSpaces
+				m.state = stateCommand
+				m.cmdInput.Focus()
+				m.cmdInput.SetValue("/space rename ")
+				m.cmdInput.SetCursor(len(m.cmdInput.Value()))
+				m.updateCommandSuggestions()
+				m.updateLayout()
+				return m, textinput.Blink
+			}
+		case "d":
+			if m.state == stateSpaces {
+				selected, ok := m.activeList.SelectedItem().(spaceItem)
+				if !ok {
+					m.popupMsg = "Error: highlight a space to delete"
+					return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+				}
+				m.pendingDeleteSpaceID = selected.ID
+				m.pendingDeleteSpaceName = selected.Name
+				m.prevState = m.state
+				m.state = stateConfirmSpaceDelete
+				return m, nil
 			}
 		case "o":
 			if m.state == stateTasks {
@@ -980,6 +1030,39 @@ func (m *AppModel) updateConfirmListDelete(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *AppModel) updateConfirmSpaceDelete(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch strings.ToLower(msg.String()) {
+		case "y", "enter":
+			spaceID := m.pendingDeleteSpaceID
+			spaceName := m.pendingDeleteSpaceName
+			m.pendingDeleteSpaceID = ""
+			m.pendingDeleteSpaceName = ""
+			
+			teamID := m.selectedTeam
+			if teamID == "" && m.cfg != nil {
+				teamID = m.cfg.ClickupTeamID
+			}
+			if teamID == "" {
+				m.state = m.prevState
+				m.popupMsg = "Error: select a Workspace first"
+				return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+			}
+			m.loading = true
+			m.loadingMsg = "Deleting space..."
+			return m, tea.Batch(m.spinner.Tick, deleteSpaceCmd(m.client, teamID, spaceID, spaceName))
+		case "n", "esc", "q":
+			m.pendingDeleteSpaceID = ""
+			m.pendingDeleteSpaceName = ""
+			m.state = m.prevState
+			m.popupMsg = "Space deletion cancelled"
+			return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+		}
+	}
+	return m, nil
+}
+
 func (m *AppModel) updateConfirmDiscardDesc(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
@@ -1407,6 +1490,21 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.loading = true
 				m.loadingMsg = "Renaming space..."
 				return m, tea.Batch(m.spinner.Tick, renameSpaceCmd(m.client, teamID, selected.ID, name))
+			} else if strings.HasPrefix(val, "/space delete") {
+				if m.prevState != stateSpaces {
+					m.popupMsg = "Error: /space delete only works from the spaces view"
+					return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+				}
+				selected, ok := m.activeList.SelectedItem().(spaceItem)
+				if !ok {
+					m.popupMsg = "Error: highlight a space first"
+					return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+				}
+				m.pendingDeleteSpaceID = selected.ID
+				m.pendingDeleteSpaceName = selected.Name
+				m.prevState = m.state
+				m.state = stateConfirmSpaceDelete
+				return m, nil
 			} else if strings.HasPrefix(val, "/list create ") {
 				name := strings.TrimSpace(strings.TrimPrefix(val, "/list create "))
 				if name == "" {

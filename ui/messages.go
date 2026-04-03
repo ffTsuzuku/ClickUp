@@ -67,6 +67,11 @@ type spaceRenamedMsg struct {
 	Name   string
 }
 
+type spaceDeletedMsg struct {
+	Spaces []clickup.Space
+	Name   string
+}
+
 type listCreatedMsg struct {
 	Hierarchy *clickup.SpaceHierarchy
 	Name      string

@@ -109,6 +109,19 @@ func renameSpaceCmd(c *clickup.Client, teamID, spaceID, name string) tea.Cmd {
 	}
 }
 
+func deleteSpaceCmd(c *clickup.Client, teamID, spaceID, name string) tea.Cmd {
+	return func() tea.Msg {
+		if err := c.DeleteSpace(spaceID); err != nil {
+			return errMsg(err)
+		}
+		spaces, err := c.GetSpaces(teamID)
+		if err != nil {
+			return errMsg(err)
+		}
+		return spaceDeletedMsg{Spaces: spaces, Name: name}
+	}
+}
+
 func createListCmd(c *clickup.Client, spaceID, folderID, name string) tea.Cmd {
 	return func() tea.Msg {
 		var err error

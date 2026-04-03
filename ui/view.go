@@ -200,6 +200,7 @@ func (m *AppModel) updateCommandSuggestions() {
 		sugs = append(sugs, Suggestion{"/space", "Manage Spaces"})
 		sugs = append(sugs, Suggestion{"/space create ", "Create a new Space"})
 		sugs = append(sugs, Suggestion{"/space rename ", "Rename the highlighted Space"})
+		sugs = append(sugs, Suggestion{"/space delete", "Delete the highlighted Space"})
 	} else if m.prevState == stateLists {
 		sugs = append(sugs, Suggestion{"/filter", "Filter lists by name"})
 		sugs = append(sugs, Suggestion{"/list", "Manage Lists"})
@@ -562,6 +563,7 @@ func (m *AppModel) updateHelpContent() {
 	b.WriteString("• /search status:<status> assignee:<name> <text> : Search with filters\n")
 	b.WriteString("• /space create <name>     : Create a new Space in the current Workspace\n")
 	b.WriteString("• /space rename <name>     : Rename the highlighted Space in the spaces view\n")
+	b.WriteString("• /space delete            : Delete the highlighted Space after confirmation\n")
 	b.WriteString("• /list create <name>      : Create a new List in the current Folder or Space\n")
 	b.WriteString("• /list rename <name>      : Rename the highlighted List in the list view\n")
 	b.WriteString("• /list delete             : Delete the highlighted List after confirmation\n")
@@ -619,10 +621,13 @@ func (m *AppModel) updateHelpContent() {
 	b.WriteString("• D                : Delete checklist\n")
 	b.WriteString("• Esc              : Exit to task detail\n\n")
 
-	b.WriteString(lipgloss.NewStyle().Bold(true).Render("List Actions"))
+	b.WriteString(lipgloss.NewStyle().Bold(true).Render("List/Space Actions"))
 	b.WriteString("\n")
+	b.WriteString("• a                : Create a new Space (in Spaces view)\n")
+	b.WriteString("• e                : Rename highlighted Space (in Spaces view)\n")
+	b.WriteString("• d                : Delete highlighted Space (in Spaces view)\n")
 	b.WriteString("• a / n            : Create a new task (in Tasks view)\n")
-	b.WriteString("• r                : Refresh the current list\n\n")
+	b.WriteString("• r                : Refresh the current view\n\n")
 
 	b.WriteString(lipgloss.NewStyle().Bold(true).Render("Default Routing Commands"))
 	b.WriteString("\n")
@@ -813,6 +818,8 @@ func (m *AppModel) breadcrumb() string {
 		parts = append(parts, "Profiles", "Delete Profile")
 	case stateConfirmListDelete:
 		parts = append(parts, "Lists", "Delete List")
+	case stateConfirmSpaceDelete:
+		parts = append(parts, "Spaces", "Delete Space")
 	case stateConfirmDiscardDesc:
 		parts = append(parts, "Task", "Discard Description Changes")
 	case stateFilePicker:
@@ -867,6 +874,17 @@ func (m *AppModel) View() string {
 			if lastIdx >= 0 {
 				style := lipgloss.NewStyle().Foreground(ColorSubtext)
 				lines[lastIdx] = strings.TrimRight(lines[lastIdx], " ") + style.Render(" • a/n: new task • r: refresh")
+				view = strings.Join(lines, "\n")
+			}
+		} else if m.state == stateSpaces {
+			lines := strings.Split(view, "\n")
+			lastIdx := len(lines) - 1
+			for lastIdx >= 0 && strings.TrimSpace(lines[lastIdx]) == "" {
+				lastIdx--
+			}
+			if lastIdx >= 0 {
+				style := lipgloss.NewStyle().Foreground(ColorSubtext)
+				lines[lastIdx] = strings.TrimRight(lines[lastIdx], " ") + style.Render(" • a/n: new • e: rename • d: delete • r: refresh")
 				view = strings.Join(lines, "\n")
 			}
 		} else if m.state == stateSearchResults {
@@ -952,6 +970,17 @@ func (m *AppModel) View() string {
 			Render(
 				TitleStyle.Render("Delete List?") + "\n\n" +
 					fmt.Sprintf("Delete list %q?", m.pendingDeleteListName) + "\n\n" +
+					lipgloss.NewStyle().Foreground(ColorSubtext).Render("y/enter: yes • n/esc: no"),
+			)
+		mainContent = lipgloss.Place(m.width, m.height-8, lipgloss.Center, lipgloss.Center, box)
+	case stateConfirmSpaceDelete:
+		box := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(ColorBorder).
+			Padding(1, 2).
+			Render(
+				TitleStyle.Render("Delete Space?") + "\n\n" +
+					fmt.Sprintf("Delete space %q?", m.pendingDeleteSpaceName) + "\n\n" +
 					lipgloss.NewStyle().Foreground(ColorSubtext).Render("y/enter: yes • n/esc: no"),
 			)
 		mainContent = lipgloss.Place(m.width, m.height-8, lipgloss.Center, lipgloss.Center, box)
