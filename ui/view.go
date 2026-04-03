@@ -192,13 +192,33 @@ func (m *AppModel) updateCommandSuggestions() {
 
 	sugs = append(sugs, Suggestion{"/clear", "Clear active list filters"})
 	sugs = append(sugs, Suggestion{"/help", "Show help documentation"})
-	sugs = append(sugs, Suggestion{"/ticket ", "Open a ticket directly by ID"})
-	sugs = append(sugs, Suggestion{"/search ", "Search tickets across the workspace"})
-	sugs = append(sugs, Suggestion{"/space create ", "Create a new Space in the current Workspace"})
-	sugs = append(sugs, Suggestion{"/space rename ", "Rename the highlighted Space"})
-	sugs = append(sugs, Suggestion{"/list create ", "Create a new List in the current Folder or Space"})
-	sugs = append(sugs, Suggestion{"/list rename ", "Rename the highlighted List"})
-	sugs = append(sugs, Suggestion{"/list delete", "Delete the highlighted List"})
+
+	if m.prevState == stateTeams {
+		sugs = append(sugs, Suggestion{"/filter", "Filter workspaces by name"})
+	} else if m.prevState == stateSpaces {
+		sugs = append(sugs, Suggestion{"/filter", "Filter spaces by name"})
+		sugs = append(sugs, Suggestion{"/space", "Manage Spaces"})
+		sugs = append(sugs, Suggestion{"/space create ", "Create a new Space"})
+		sugs = append(sugs, Suggestion{"/space rename ", "Rename the highlighted Space"})
+	} else if m.prevState == stateLists {
+		sugs = append(sugs, Suggestion{"/filter", "Filter lists by name"})
+		sugs = append(sugs, Suggestion{"/list", "Manage Lists"})
+		sugs = append(sugs, Suggestion{"/list create ", "Create a new List"})
+		sugs = append(sugs, Suggestion{"/list rename ", "Rename the highlighted List"})
+		sugs = append(sugs, Suggestion{"/list delete", "Delete the highlighted List"})
+	} else if m.prevState == stateTasks {
+		sugs = append(sugs, Suggestion{"/filter", "Filter tasks by text"})
+		sugs = append(sugs, Suggestion{"/list", "Manage Lists"})
+		sugs = append(sugs, Suggestion{"/list create ", "Create a new List"})
+	}
+
+
+	if m.prevState != stateTeams {
+		sugs = append(sugs, Suggestion{"/ticket ", "Open a ticket directly by ID"})
+		sugs = append(sugs, Suggestion{"/search ", "Search tickets across the workspace"})
+	}
+
+	sugs = append(sugs, Suggestion{"/profile", "Manage ClickUp profiles"})
 	sugs = append(sugs, Suggestion{"/profile list", "List available ClickUp profiles"})
 	sugs = append(sugs, Suggestion{"/profile create ", "Create a new empty profile and switch to it"})
 	sugs = append(sugs, Suggestion{"/profile switch ", "Switch to another profile"})
@@ -209,12 +229,16 @@ func (m *AppModel) updateCommandSuggestions() {
 		sugs = append(sugs, Suggestion{"/profile switch " + profileName, "Switch to profile " + profileName})
 		sugs = append(sugs, Suggestion{"/profile delete " + profileName, "Delete profile " + profileName})
 	}
-	sugs = append(sugs, Suggestion{"/search status:in progress", "Search tickets filtered by status"})
-	sugs = append(sugs, Suggestion{"/search assignee:deep api", "Search tickets filtered by assignee plus text"})
+
+	if m.prevState != stateTeams {
+		sugs = append(sugs, Suggestion{"/search status:in progress", "Search tickets filtered by status"})
+		sugs = append(sugs, Suggestion{"/search assignee:deep api", "Search tickets filtered by assignee plus text"})
+	}
 
 	if m.prevState == stateTeams || m.prevState == stateSpaces || m.prevState == stateLists {
 		sugs = append(sugs, Suggestion{"/default set", "Set the currently highlighted item as your default routing"})
 	}
+	sugs = append(sugs, Suggestion{"/default", "Manage default routing"})
 	sugs = append(sugs, Suggestion{"/default user ", "Set a default assignee filter (e.g. /default user deep)"})
 	sugs = append(sugs, Suggestion{"/default user clear", "Clear default assignee filter"})
 	sugs = append(sugs, Suggestion{"/default clear", "Clear all default automatic routing"})
@@ -252,12 +276,15 @@ func (m *AppModel) updateCommandSuggestions() {
 		sugs = append(sugs, Suggestion{"/copyai", "Copy the ticket context for AI prompting to your clipboard"})
 		sugs = append(sugs, Suggestion{"/editext", "Edit description in $EDITOR (vim etc)"})
 		sugs = append(sugs, Suggestion{"/subtask", "Add a subtask to this ticket"})
+		sugs = append(sugs, Suggestion{"/checklist", "Manage checklists"})
 		sugs = append(sugs, Suggestion{"/checklist add ", "Create a checklist (or use 'n' in checklist view)"})
 		sugs = append(sugs, Suggestion{"L", "Open checklist view (when viewing task)"})
+		sugs = append(sugs, Suggestion{"/attach", "Manage attachments"})
 		sugs = append(sugs, Suggestion{"/attach open ", "Open an attachment preview in your browser by number (e.g. /attach open 1)"})
 		sugs = append(sugs, Suggestion{"/attach download ", "Download an attachment by number (e.g. /attach download 1)"})
 		sugs = append(sugs, Suggestion{"/attach share ", "Copy an attachment URL to your clipboard by number (e.g. /attach share 1)"})
 		sugs = append(sugs, Suggestion{"/attach upload", "Open a file browser to upload an attachment"})
+		sugs = append(sugs, Suggestion{"/comment", "Manage comments"})
 		sugs = append(sugs, Suggestion{"/comment edit ", "Edit a comment by its number (e.g. /comment edit 1)"})
 		sugs = append(sugs, Suggestion{"/priority ", "Set task priority (urgent, high, normal, low, none)"})
 		sugs = append(sugs, Suggestion{"/priority urgent", "Set priority to Urgent"})
@@ -288,20 +315,14 @@ func (m *AppModel) updateCommandSuggestions() {
 			sugs = append(sugs, Suggestion{"/status " + s, "Set status to " + s})
 		}
 	} else if m.prevState == stateTeams {
-		sugs = append(sugs, Suggestion{"/filter", "Filter workspaces by name"})
 		for _, t := range m.allTeams {
 			sugs = append(sugs, Suggestion{"/filter " + strings.ToLower(t.Name), "Find workspace " + t.Name})
 		}
 	} else if m.prevState == stateSpaces {
-		sugs = append(sugs, Suggestion{"/filter", "Filter spaces by name"})
-		sugs = append(sugs, Suggestion{"/space rename ", "Rename the highlighted Space"})
 		for _, t := range m.allSpaces {
 			sugs = append(sugs, Suggestion{"/filter " + strings.ToLower(t.Name), "Find space " + t.Name})
 		}
 	} else if m.prevState == stateLists {
-		sugs = append(sugs, Suggestion{"/filter", "Filter lists by name"})
-		sugs = append(sugs, Suggestion{"/list rename ", "Rename the highlighted List"})
-		sugs = append(sugs, Suggestion{"/list delete", "Delete the highlighted List"})
 		for _, t := range m.allLists {
 			sugs = append(sugs, Suggestion{"/filter " + strings.ToLower(t.Name), "Find list " + t.Name})
 		}

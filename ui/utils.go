@@ -346,6 +346,16 @@ func (m *AppModel) filterSuggestions() {
 	m.filteredSuggest = nil
 	for _, s := range m.suggestions {
 		text := strings.ToLower(s.Text)
+
+		// Hide sub-commands (multi-word) unless base command is fully typed
+		sParts := strings.Fields(text)
+		if len(sParts) > 1 {
+			baseCmd := sParts[0]
+			if !(strings.HasPrefix(v, baseCmd+" ") || v == baseCmd) {
+				continue
+			}
+		}
+
 		match := true
 		for _, w := range words {
 			if w != "" && !strings.Contains(text, w) {
