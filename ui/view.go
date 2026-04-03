@@ -323,6 +323,44 @@ func (m *AppModel) renderConfirmCommentDelete() string {
 	return b.String()
 }
 
+func (m *AppModel) renderMentionPicker() string {
+	if len(m.mentionSuggestions) == 0 {
+		if strings.Contains(m.commentInput.Value(), "@") && m.selectedTask.ID != "" && m.teamMembersTaskID != m.selectedTask.ID {
+			return lipgloss.NewStyle().Foreground(ColorSubtext).Render("Loading task members...")
+		}
+		return ""
+	}
+
+	var b strings.Builder
+	title := "Mention user"
+	if m.mentionQuery != "" {
+		title = fmt.Sprintf("Mention user: %s", m.mentionQuery)
+	}
+	b.WriteString(lipgloss.NewStyle().Foreground(ColorSecondary).Bold(true).Render(title))
+	b.WriteString("\n")
+
+	for i, member := range m.mentionSuggestions {
+		name := "Unknown"
+		if username := memberUsername(member); username != "" {
+			name = "@" + username
+		}
+		line := "  " + name
+		style := lipgloss.NewStyle().Foreground(ColorText)
+		if i == m.mentionSelectedIdx {
+			line = "> " + name
+			style = lipgloss.NewStyle().Foreground(ColorPrimary).Bold(true)
+		}
+		b.WriteString(style.Render(line))
+		if i < len(m.mentionSuggestions)-1 {
+			b.WriteString("\n")
+		}
+	}
+
+	b.WriteString("\n")
+	b.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext).Render("Enter select | Tab cycle"))
+	return b.String()
+}
+
 func (m *AppModel) updateCommandSuggestions() {
 	var sugs []Suggestion
 
@@ -348,7 +386,6 @@ func (m *AppModel) updateCommandSuggestions() {
 		sugs = append(sugs, Suggestion{"/list", "Manage Lists"})
 		sugs = append(sugs, Suggestion{"/list create ", "Create a new List"})
 	}
-
 
 	if m.prevState != stateTeams {
 		sugs = append(sugs, Suggestion{"/ticket ", "Open a ticket directly by ID"})
@@ -784,10 +821,10 @@ func (m *AppModel) updateHelpContent() {
 	b.WriteString("• /attach download <n> : Trigger attachment download\n")
 	b.WriteString("• /attach share <n>    : Copy attachment URL\n")
 	b.WriteString("• /attach upload        : Open a file browser to upload an attachment\n")
-		b.WriteString("• c                : Add a comment\n")
-		b.WriteString("• A                : Copy ticket context for AI prompting\n")
-		b.WriteString("• a                : Create a new subtask\n")
-		b.WriteString("• s                : Copy ticket URL to clipboard\n")
+	b.WriteString("• c                : Add a comment\n")
+	b.WriteString("• A                : Copy ticket context for AI prompting\n")
+	b.WriteString("• a                : Create a new subtask\n")
+	b.WriteString("• s                : Copy ticket URL to clipboard\n")
 	b.WriteString("• r                : Refresh current view from API\n")
 	b.WriteString("• L                : Open checklist view\n")
 	b.WriteString("• C                : Open comments view\n")
@@ -1120,7 +1157,11 @@ func (m *AppModel) View() string {
 		if m.commentReturnState == stateCommentsView {
 			bg = m.vp.View()
 		}
-		mainContent = bg + "\n\n" + header + "\n" + m.commentInput.View() + "\n(Ctrl+S to submit, Ctrl+E for Vim, Esc to cancel)"
+		mainContent = bg + "\n\n" + header + "\n" + m.commentInput.View()
+		if picker := m.renderMentionPicker(); picker != "" {
+			mainContent += "\n" + picker
+		}
+		mainContent += "\n(Ctrl+S to submit, Ctrl+E for Vim, Esc to cancel)"
 	case stateCreateTask:
 		mainContent = m.activeList.View() + "\n\n" + lipgloss.NewStyle().Bold(true).Render("New Task: ") + m.taskInput.View() + "\n" + lipgloss.NewStyle().Foreground(ColorSubtext).Render("Enter to create | Esc to cancel")
 	case stateCreateSubtask:
@@ -1149,7 +1190,11 @@ func (m *AppModel) View() string {
 		if m.commentReturnState == stateCommentsView {
 			bg = m.vp.View()
 		}
-		mainContent = bg + "\n\n" + TitleStyle.Render("Editing Comment:") + "\n" + m.commentInput.View() + "\n(Ctrl+S to save, Ctrl+E for Vim, Esc to cancel)"
+		mainContent = bg + "\n\n" + TitleStyle.Render("Editing Comment:") + "\n" + m.commentInput.View()
+		if picker := m.renderMentionPicker(); picker != "" {
+			mainContent += "\n" + picker
+		}
+		mainContent += "\n(Ctrl+S to save, Ctrl+E for Vim, Esc to cancel)"
 	case stateConfirmProfileDelete:
 		contentWidth, contentHeight := m.contentViewportSize()
 		box := lipgloss.NewStyle().
@@ -1213,11 +1258,11 @@ func (m *AppModel) View() string {
 	var sb strings.Builder
 	if m.state == stateCommand && len(m.filteredSuggest) > 0 {
 		sb.WriteString("\n")
-		
+
 		startIdx := 0
 		endIdx := len(m.filteredSuggest)
 		hasMoreItems := len(m.filteredSuggest) > 10
-		
+
 		if hasMoreItems {
 			startIdx = m.suggestIdx - 4
 			if startIdx < 0 {

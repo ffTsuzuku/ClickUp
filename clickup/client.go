@@ -154,6 +154,17 @@ type Member struct {
 	} `json:"user"`
 }
 
+type CommentBodyPart struct {
+	Text       string                 `json:"text,omitempty"`
+	Type       string                 `json:"type,omitempty"`
+	User       *CommentTaggedUser     `json:"user,omitempty"`
+	Attributes map[string]interface{} `json:"attributes,omitempty"`
+}
+
+type CommentTaggedUser struct {
+	ID int `json:"id"`
+}
+
 type Comment struct {
 	ID          string    `json:"id"`
 	CommentText string    `json:"comment_text"`

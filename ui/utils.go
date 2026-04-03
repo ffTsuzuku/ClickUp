@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/tsuzuku/clickup-tui/clickup"
@@ -473,4 +474,300 @@ func flattenComments(comments []clickup.Comment) []clickup.Comment {
 		}
 	}
 	return flat
+}
+
+func memberUsername(member clickup.Member) string {
+	return strings.TrimSpace(member.User.Username)
+}
+
+func memberUserID(member clickup.Member) int {
+	return member.User.ID
+}
+
+func memberFromAssignee(user clickup.Assignee) clickup.Member {
+	var member clickup.Member
+	member.User.ID = user.ID
+	member.User.Username = user.Username
+	return member
+}
+
+func (m *AppModel) mentionableMembers() []clickup.Member {
+	var members []clickup.Member
+	seen := make(map[int]bool)
+
+	addMember := func(member clickup.Member) {
+		id := memberUserID(member)
+		name := memberUsername(member)
+		if id == 0 || name == "" || seen[id] {
+			return
+		}
+		seen[id] = true
+		members = append(members, member)
+	}
+
+	for _, member := range m.teamMembers {
+		addMember(member)
+	}
+
+	addMember(memberFromAssignee(m.selectedTask.Creator))
+	for _, assignee := range m.selectedTask.Assignees {
+		addMember(memberFromAssignee(assignee))
+	}
+
+	for _, comment := range m.selectedComments {
+		addMember(memberFromAssignee(comment.User))
+	}
+
+	for _, task := range m.allTasks {
+		addMember(memberFromAssignee(task.Creator))
+		for _, assignee := range task.Assignees {
+			addMember(memberFromAssignee(assignee))
+		}
+	}
+
+	if m.currentUserID != 0 && m.currentUser != "" {
+		var member clickup.Member
+		member.User.ID = m.currentUserID
+		member.User.Username = m.currentUser
+		addMember(member)
+	}
+
+	return members
+}
+
+func (m *AppModel) cursorTextIndex() int {
+	lines := strings.Split(m.commentInput.Value(), "\n")
+	line := m.commentInput.Line()
+	if line < 0 {
+		return 0
+	}
+	if line >= len(lines) {
+		line = len(lines) - 1
+	}
+
+	index := 0
+	for i := 0; i < line; i++ {
+		index += len([]rune(lines[i])) + 1
+	}
+	return index + m.commentInput.LineInfo().CharOffset
+}
+
+func isMentionBoundary(r rune) bool {
+	return unicode.IsSpace(r) || strings.ContainsRune(".,!?:;()[]{}<>\"'`/\\|", r)
+}
+
+func isMentionQueryRune(r rune) bool {
+	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' || r == '-' || r == '.'
+}
+
+func (m *AppModel) activeMentionQuery() (int, int, string, bool) {
+	cursor := m.cursorTextIndex()
+	runes := []rune(m.commentInput.Value())
+	if cursor < 0 || cursor > len(runes) {
+		return 0, 0, "", false
+	}
+
+	start := -1
+	for i := cursor - 1; i >= 0; i-- {
+		r := runes[i]
+		if r == '@' {
+			if i > 0 {
+				prev := runes[i-1]
+				if !isMentionBoundary(prev) {
+					return 0, 0, "", false
+				}
+			}
+			start = i
+			break
+		}
+		if isMentionBoundary(r) {
+			return 0, 0, "", false
+		}
+		if !isMentionQueryRune(r) {
+			return 0, 0, "", false
+		}
+	}
+	if start == -1 {
+		return 0, 0, "", false
+	}
+
+	queryRunes := runes[start+1 : cursor]
+	for _, r := range queryRunes {
+		if !isMentionQueryRune(r) {
+			return 0, 0, "", false
+		}
+	}
+
+	return start, cursor, string(queryRunes), true
+}
+
+func scoreMentionMatch(query, username string) int {
+	query = normalizeSearchValue(query)
+	username = normalizeSearchValue(username)
+	if username == "" {
+		return -1
+	}
+	if query == "" {
+		return 1
+	}
+	switch {
+	case username == query:
+		return 100
+	case strings.HasPrefix(username, query):
+		return 80
+	case strings.Contains(username, query):
+		return 60
+	case fuzzyMatch(query, username):
+		return 40
+	default:
+		return -1
+	}
+}
+
+func (m *AppModel) refreshMentionSuggestions() {
+	m.mentionSuggestions = nil
+	m.mentionSelectedIdx = 0
+	m.mentionQuery = ""
+	m.mentionQueryStart = 0
+	m.mentionQueryEnd = 0
+
+	start, end, query, ok := m.activeMentionQuery()
+	members := m.mentionableMembers()
+	if !ok || len(members) == 0 {
+		return
+	}
+
+	type rankedMember struct {
+		member clickup.Member
+		score  int
+	}
+	var ranked []rankedMember
+	seen := make(map[int]bool, len(members))
+	for _, member := range members {
+		id := memberUserID(member)
+		name := memberUsername(member)
+		if id == 0 || name == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		score := scoreMentionMatch(query, name)
+		if score < 0 {
+			continue
+		}
+		ranked = append(ranked, rankedMember{member: member, score: score})
+	}
+
+	sort.SliceStable(ranked, func(i, j int) bool {
+		if ranked[i].score != ranked[j].score {
+			return ranked[i].score > ranked[j].score
+		}
+		return strings.ToLower(memberUsername(ranked[i].member)) < strings.ToLower(memberUsername(ranked[j].member))
+	})
+
+	limit := min(6, len(ranked))
+	for i := 0; i < limit; i++ {
+		m.mentionSuggestions = append(m.mentionSuggestions, ranked[i].member)
+	}
+	if len(m.mentionSuggestions) == 0 {
+		return
+	}
+
+	m.mentionQuery = query
+	m.mentionQueryStart = start
+	m.mentionQueryEnd = end
+}
+
+func commentPartsFromText(comment string, members []clickup.Member) []clickup.CommentBodyPart {
+	runes := []rune(comment)
+	if len(runes) == 0 {
+		return nil
+	}
+
+	type mentionCandidate struct {
+		member  clickup.Member
+		name    string
+		runeLen int
+	}
+	var candidates []mentionCandidate
+	seen := make(map[int]bool, len(members))
+	for _, member := range members {
+		name := memberUsername(member)
+		id := memberUserID(member)
+		if name == "" || id == 0 || seen[id] {
+			continue
+		}
+		seen[id] = true
+		candidates = append(candidates, mentionCandidate{
+			member:  member,
+			name:    name,
+			runeLen: len([]rune(name)),
+		})
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].runeLen != candidates[j].runeLen {
+			return candidates[i].runeLen > candidates[j].runeLen
+		}
+		return strings.ToLower(candidates[i].name) < strings.ToLower(candidates[j].name)
+	})
+
+	var parts []clickup.CommentBodyPart
+	var plain strings.Builder
+
+	flushPlain := func() {
+		if plain.Len() == 0 {
+			return
+		}
+		parts = append(parts, clickup.CommentBodyPart{Text: plain.String()})
+		plain.Reset()
+	}
+
+	for i := 0; i < len(runes); {
+		if runes[i] != '@' {
+			plain.WriteRune(runes[i])
+			i++
+			continue
+		}
+		if i > 0 && !isMentionBoundary(runes[i-1]) {
+			plain.WriteRune(runes[i])
+			i++
+			continue
+		}
+
+		var matched *mentionCandidate
+		matchEnd := i + 1
+		for idx := range candidates {
+			end := i + 1 + candidates[idx].runeLen
+			if end > len(runes) {
+				continue
+			}
+			if !strings.EqualFold(string(runes[i+1:end]), candidates[idx].name) {
+				continue
+			}
+			if end < len(runes) && !isMentionBoundary(runes[end]) {
+				continue
+			}
+			matched = &candidates[idx]
+			matchEnd = end
+			break
+		}
+
+		if matched == nil {
+			plain.WriteRune(runes[i])
+			i++
+			continue
+		}
+
+		flushPlain()
+		parts = append(parts, clickup.CommentBodyPart{
+			Type: "tag",
+			User: &clickup.CommentTaggedUser{ID: memberUserID(matched.member)},
+		})
+		i = matchEnd
+	}
+
+	flushPlain()
+	if len(parts) == 1 && parts[0].Type == "" {
+		return nil
+	}
+	return parts
 }

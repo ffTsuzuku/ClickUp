@@ -99,6 +99,7 @@ type AppModel struct {
 	moveCandidateLists []clickup.List
 	moveTaskID         string
 	teamMembers        []clickup.Member
+	teamMembersTaskID  string
 	parentTaskID       string // used when creating subtasks
 
 	loading    bool
@@ -112,6 +113,11 @@ type AppModel struct {
 	editingCommentID          string
 	replyToCommentID          string
 	replyToUser               string
+	mentionSuggestions        []clickup.Member
+	mentionSelectedIdx        int
+	mentionQuery              string
+	mentionQueryStart         int
+	mentionQueryEnd           int
 	pendingDeleteProfile      string
 	pendingDeleteListID       string
 	pendingDeleteListName     string

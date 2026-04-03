@@ -301,9 +301,9 @@ func fetchAllListsForMoveCmd(c *clickup.Client, spaceID string) tea.Cmd {
 	}
 }
 
-func addCommentCmd(c *clickup.Client, taskID, comment, parentID string) tea.Cmd {
+func addCommentCmd(c *clickup.Client, taskID, comment, parentID string, members []clickup.Member) tea.Cmd {
 	return func() tea.Msg {
-		if err := c.AddComment(taskID, comment, parentID); err != nil {
+		if err := c.AddComment(taskID, comment, parentID, commentPartsFromText(comment, members)); err != nil {
 			return errMsg(err)
 		}
 		return commentAddedMsg{}
@@ -320,9 +320,9 @@ func fetchCommentsCmd(c *clickup.Client, taskID string) tea.Cmd {
 	}
 }
 
-func editCommentCmd(c *clickup.Client, commentID, text string) tea.Cmd {
+func editCommentCmd(c *clickup.Client, commentID, text string, members []clickup.Member) tea.Cmd {
 	return func() tea.Msg {
-		if err := c.UpdateComment(commentID, text); err != nil {
+		if err := c.UpdateComment(commentID, text, commentPartsFromText(text, members)); err != nil {
 			return errMsg(err)
 		}
 		return commentAddedMsg{}
@@ -472,9 +472,9 @@ func (m *AppModel) copyTaskForAI() tea.Cmd {
 	})
 }
 
-func fetchTeamMembersCmd(c *clickup.Client, teamID string) tea.Cmd {
+func fetchTaskMembersCmd(c *clickup.Client, taskID string) tea.Cmd {
 	return func() tea.Msg {
-		members, err := c.GetTeamMembers(teamID)
+		members, err := c.GetTaskMembers(taskID)
 		if err != nil {
 			return errMsg(err)
 		}

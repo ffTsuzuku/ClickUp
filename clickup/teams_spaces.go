@@ -162,8 +162,8 @@ func (c *Client) DeleteList(listID string) error {
 	return err
 }
 
-func (c *Client) GetTeamMembers(teamID string) ([]Member, error) {
-	endpoint := fmt.Sprintf("/team/%s/member", teamID)
+func (c *Client) GetTaskMembers(taskID string) ([]Member, error) {
+	endpoint := fmt.Sprintf("/task/%s/member", taskID)
 	data, err := c.doReq("GET", endpoint, nil)
 	if err != nil {
 		return nil, err

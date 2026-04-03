@@ -5,8 +5,21 @@ import (
 	"fmt"
 )
 
-// AddComment is a mock for now (requires view task detail parsing or specific endpoint)
-func (c *Client) AddComment(taskID, comment, parentID string) error {
+func buildCommentRequestBody(comment string, parts []CommentBodyPart) []byte {
+	reqBody := map[string]interface{}{
+		"notify_all": true,
+	}
+	if len(parts) > 0 {
+		reqBody["comment"] = parts
+	} else {
+		reqBody["comment_text"] = comment
+	}
+
+	body, _ := json.Marshal(reqBody)
+	return body
+}
+
+func (c *Client) AddComment(taskID, comment, parentID string, parts []CommentBodyPart) error {
 	var endpoint string
 	if parentID != "" {
 		endpoint = fmt.Sprintf("/comment/%s/reply", parentID)
@@ -14,12 +27,7 @@ func (c *Client) AddComment(taskID, comment, parentID string) error {
 		endpoint = fmt.Sprintf("/task/%s/comment", taskID)
 	}
 
-	reqBody := map[string]interface{}{
-		"comment_text": comment,
-		"notify_all":   true,
-	}
-	body, _ := json.Marshal(reqBody)
-
+	body := buildCommentRequestBody(comment, parts)
 	_, err := c.doReq("POST", endpoint, body)
 	return err
 }
@@ -55,10 +63,9 @@ func (c *Client) GetTaskComments(taskID string) ([]Comment, error) {
 }
 
 // UpdateComment updates an existing comment
-func (c *Client) UpdateComment(commentID, commentText string) error {
+func (c *Client) UpdateComment(commentID, commentText string, parts []CommentBodyPart) error {
 	endpoint := fmt.Sprintf("/comment/%s", commentID)
-	reqBody := map[string]interface{}{"comment_text": commentText}
-	body, _ := json.Marshal(reqBody)
+	body := buildCommentRequestBody(commentText, parts)
 	_, err := c.doReq("PUT", endpoint, body)
 	return err
 }

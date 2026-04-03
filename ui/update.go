@@ -117,6 +117,9 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.prevState = msg.BackState
 		}
 		m.updateViewportContent()
+		if m.selectedTask.ID != "" && m.teamMembersTaskID != m.selectedTask.ID {
+			return m, fetchTaskMembersCmd(m.client, m.selectedTask.ID)
+		}
 		return m, nil
 	case attachmentUploadedMsg:
 		m.loading = false
@@ -158,6 +161,8 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case teamMembersMsg:
 		m.loading = false
 		m.teamMembers = []clickup.Member(msg)
+		m.teamMembersTaskID = m.selectedTask.ID
+		m.refreshMentionSuggestions()
 		return m, nil
 	case teamsMsg:
 		m.loading = false
@@ -319,11 +324,11 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else if m.externalEditTarget == "comment" || m.state == stateEditComment {
 				m.loading = true
 				m.loadingMsg = "Updating comment..."
-				cmds = append(cmds, tea.Batch(m.spinner.Tick, editCommentCmd(m.client, m.editingCommentID, content)))
+				cmds = append(cmds, tea.Batch(m.spinner.Tick, editCommentCmd(m.client, m.editingCommentID, content, m.mentionableMembers())))
 			} else if m.externalEditTarget == "new_comment" || m.state == stateComment {
 				m.loading = true
 				m.loadingMsg = "Adding comment..."
-				cmds = append(cmds, tea.Batch(m.spinner.Tick, addCommentCmd(m.client, m.selectedTask.ID, content, m.replyToCommentID)))
+				cmds = append(cmds, tea.Batch(m.spinner.Tick, addCommentCmd(m.client, m.selectedTask.ID, content, m.replyToCommentID, m.mentionableMembers())))
 			}
 		}
 		m.externalEditTarget = ""
@@ -337,6 +342,7 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case commentAddedMsg:
 		m.replyToCommentID = ""
 		m.replyToUser = ""
+		m.refreshMentionSuggestions()
 		m.popupMsg = "Comment added!"
 		m.state = m.commentReturnState
 		return m, tea.Batch(
@@ -346,6 +352,7 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case commentDeletedMsg:
 		m.replyToCommentID = ""
 		m.replyToUser = ""
+		m.refreshMentionSuggestions()
 		m.popupMsg = "Comment deleted!"
 		return m, tea.Batch(
 			fetchCommentsCmd(m.client, m.selectedTask.ID),
@@ -594,6 +601,8 @@ func (m *AppModel) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case stateTeams:
 				if i, ok := m.activeList.SelectedItem().(teamItem); ok {
 					m.selectedTeam = i.ID
+					m.teamMembers = nil
+					m.teamMembersTaskID = ""
 					m.loading = true
 					m.loadingMsg = "Loading spaces..."
 					return m, tea.Batch(m.spinner.Tick, fetchSpacesCmd(m.client, m.selectedTeam))
@@ -684,7 +693,9 @@ func (m *AppModel) updateDetail(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "c":
 			m.commentReturnState = m.state
 			m.state = stateComment
+			m.commentInput.SetValue("")
 			m.commentInput.Focus()
+			m.refreshMentionSuggestions()
 			return m, textinput.Blink
 		case "A":
 			return m, m.copyTaskForAI()
@@ -752,6 +763,9 @@ func (m *AppModel) updateDetail(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *AppModel) updateComment(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		if m.handleMentionKey(msg) {
+			return m, nil
+		}
 		switch msg.String() {
 		case "ctrl+s":
 			v := m.commentInput.Value()
@@ -760,7 +774,7 @@ func (m *AppModel) updateComment(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.commentInput.Blur()
 				m.loading = true
 				m.loadingMsg = "Adding comment..."
-				return m, tea.Batch(m.spinner.Tick, addCommentCmd(m.client, m.selectedTask.ID, v, m.replyToCommentID))
+				return m, tea.Batch(m.spinner.Tick, addCommentCmd(m.client, m.selectedTask.ID, v, m.replyToCommentID, m.mentionableMembers()))
 			}
 			return m, nil
 		case "ctrl+e":
@@ -776,12 +790,89 @@ func (m *AppModel) updateComment(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	var cmd tea.Cmd
 	m.commentInput, cmd = m.commentInput.Update(msg)
+	m.refreshMentionSuggestions()
 	return m, cmd
+}
+
+func (m *AppModel) setCommentValueAndCursor(value string, cursorIndex int) {
+	m.commentInput.SetValue(value)
+	if cursorIndex < 0 {
+		cursorIndex = 0
+	}
+
+	runes := []rune(value)
+	if cursorIndex > len(runes) {
+		cursorIndex = len(runes)
+	}
+
+	row := 0
+	col := 0
+	for i := 0; i < cursorIndex; i++ {
+		if runes[i] == '\n' {
+			row++
+			col = 0
+			continue
+		}
+		col++
+	}
+
+	m.commentInput.CursorStart()
+	for i := 0; i < row; i++ {
+		m.commentInput.CursorDown()
+	}
+	m.commentInput.SetCursor(col)
+}
+
+func (m *AppModel) applyMentionSuggestion(index int) {
+	if index < 0 || index >= len(m.mentionSuggestions) {
+		return
+	}
+
+	member := m.mentionSuggestions[index]
+	username := memberUsername(member)
+	if username == "" {
+		return
+	}
+
+	runes := []rune(m.commentInput.Value())
+	before := string(runes[:m.mentionQueryStart])
+	after := string(runes[m.mentionQueryEnd:])
+	inserted := "@" + username + " "
+	newValue := before + inserted + after
+	m.setCommentValueAndCursor(newValue, len([]rune(before))+len([]rune(inserted)))
+	m.refreshMentionSuggestions()
+}
+
+func (m *AppModel) handleMentionKey(msg tea.KeyMsg) bool {
+	if len(m.mentionSuggestions) == 0 {
+		return false
+	}
+
+	switch msg.String() {
+	case "up", "ctrl+p", "shift+tab":
+		if m.mentionSelectedIdx > 0 {
+			m.mentionSelectedIdx--
+		} else {
+			m.mentionSelectedIdx = len(m.mentionSuggestions) - 1
+		}
+		return true
+	case "down", "ctrl+n", "tab":
+		m.mentionSelectedIdx = (m.mentionSelectedIdx + 1) % len(m.mentionSuggestions)
+		return true
+	case "enter":
+		m.applyMentionSuggestion(m.mentionSelectedIdx)
+		return true
+	}
+
+	return false
 }
 
 func (m *AppModel) updateEditComment(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		if m.handleMentionKey(msg) {
+			return m, nil
+		}
 		switch msg.String() {
 		case "ctrl+s":
 			v := m.commentInput.Value()
@@ -790,7 +881,7 @@ func (m *AppModel) updateEditComment(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.commentInput.Blur()
 				m.state = m.commentReturnState
 				m.popupMsg = "Updating comment..."
-				return m, tea.Batch(m.spinner.Tick, editCommentCmd(m.client, m.editingCommentID, v))
+				return m, tea.Batch(m.spinner.Tick, editCommentCmd(m.client, m.editingCommentID, v, m.mentionableMembers()))
 			}
 			return m, nil
 		case "ctrl+e":
@@ -805,6 +896,7 @@ func (m *AppModel) updateEditComment(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	var cmd tea.Cmd
 	m.commentInput, cmd = m.commentInput.Update(msg)
+	m.refreshMentionSuggestions()
 	return m, cmd
 }
 
@@ -1055,7 +1147,7 @@ func (m *AppModel) updateConfirmSpaceDelete(msg tea.Msg) (tea.Model, tea.Cmd) {
 			spaceName := m.pendingDeleteSpaceName
 			m.pendingDeleteSpaceID = ""
 			m.pendingDeleteSpaceName = ""
-			
+
 			teamID := m.selectedTeam
 			if teamID == "" && m.cfg != nil {
 				teamID = m.cfg.ClickupTeamID
@@ -1401,7 +1493,9 @@ func (m *AppModel) updateCommentsView(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "c":
 			m.commentReturnState = m.state
 			m.state = stateComment
+			m.commentInput.SetValue("")
 			m.commentInput.Focus()
+			m.refreshMentionSuggestions()
 			return m, textinput.Blink
 		case "r":
 			if len(m.selectedComments) > 0 && m.commentSelectedIdx >= 0 {
@@ -1410,7 +1504,9 @@ func (m *AppModel) updateCommentsView(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.replyToUser = c.User.Username
 				m.commentReturnState = m.state
 				m.state = stateComment
+				m.commentInput.SetValue("")
 				m.commentInput.Focus()
+				m.refreshMentionSuggestions()
 				return m, textinput.Blink
 			}
 		case "e":
@@ -1421,6 +1517,7 @@ func (m *AppModel) updateCommentsView(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.commentInput.Focus()
 				m.commentReturnState = m.state
 				m.state = stateEditComment
+				m.refreshMentionSuggestions()
 				return m, textinput.Blink
 			}
 		case "d":
@@ -2141,6 +2238,7 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 								m.editingCommentID = comment.ID
 								m.commentInput.SetValue(comment.CommentText)
 								m.commentInput.Focus()
+								m.refreshMentionSuggestions()
 								return m, textinput.Blink
 							} else if action == "reply" {
 								if comment.Parent != nil && *comment.Parent != "" {
@@ -2150,7 +2248,9 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 								m.replyToCommentID = comment.ID
 								m.replyToUser = comment.User.Username
 								m.state = stateComment
+								m.commentInput.SetValue("")
 								m.commentInput.Focus()
+								m.refreshMentionSuggestions()
 								return m, nil
 							}
 						}
