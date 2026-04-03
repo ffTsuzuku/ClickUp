@@ -216,6 +216,19 @@ func fetchTasksCmd(c *clickup.Client, teamID, listID string) tea.Cmd {
 	}
 }
 
+func deleteTaskCmd(c *clickup.Client, teamID, listID, taskID, name string) tea.Cmd {
+	return func() tea.Msg {
+		if err := c.DeleteTask(taskID); err != nil {
+			return errMsg(err)
+		}
+		tasks, err := c.GetTasksForVisibleList(teamID, listID)
+		if err != nil {
+			return errMsg(err)
+		}
+		return taskDeletedMsg{Tasks: tasks, Name: name}
+	}
+}
+
 func fetchTaskCmd(c *clickup.Client, taskID, teamID string, backState state) tea.Cmd {
 	return func() tea.Msg {
 		task, err := c.GetTask(taskID, teamID)
@@ -263,7 +276,7 @@ func fetchCommentsRecursive(taskID string, c *clickup.Client) ([]clickup.Comment
 	return flattenComments(topLevel), nil
 }
 
-func createTaskCmd(c *clickup.Client, listID, name string, userID int) tea.Cmd {
+func createTaskCmd(c *clickup.Client, teamID, listID, name string, userID int) tea.Cmd {
 	return func() tea.Msg {
 		var assignees []int
 		if userID != 0 {
@@ -273,21 +286,79 @@ func createTaskCmd(c *clickup.Client, listID, name string, userID int) tea.Cmd {
 		if err != nil {
 			return errMsg(err)
 		}
-		return taskCreatedMsg(*task)
+
+		createdTask, err := c.GetTask(task.ID, teamID)
+		if err != nil {
+			return errMsg(err)
+		}
+		comments, err := fetchCommentsRecursive(task.ID, c)
+		if err != nil {
+			return errMsg(err)
+		}
+		tasks, err := c.GetTasksForVisibleList(teamID, listID)
+		if err != nil {
+			return errMsg(err)
+		}
+
+		return taskCreatedMsg{
+			Task:      createdTask,
+			Tasks:     tasks,
+			Comments:  comments,
+			BackState: stateTasks,
+		}
 	}
 }
 
-func createSubtaskCmd(c *clickup.Client, listID, parentID, name string, userID int) tea.Cmd {
+func createSubtaskCmd(c *clickup.Client, teamID, listID, parentID, name string, userID int) tea.Cmd {
 	return func() tea.Msg {
 		var assignees []int
 		if userID != 0 {
 			assignees = []int{userID}
 		}
-		task, err := c.CreateSubtask(listID, parentID, name, assignees)
+		if _, err := c.CreateSubtask(listID, parentID, name, assignees); err != nil {
+			return errMsg(err)
+		}
+
+		parentTask, err := c.GetTask(parentID, teamID)
 		if err != nil {
 			return errMsg(err)
 		}
-		return taskCreatedMsg(*task)
+		comments, err := fetchCommentsRecursive(parentID, c)
+		if err != nil {
+			return errMsg(err)
+		}
+		tasks, err := c.GetTasksForVisibleList(teamID, listID)
+		if err != nil {
+			return errMsg(err)
+		}
+
+		return taskCreatedMsg{
+			Task:      parentTask,
+			Tasks:     tasks,
+			Comments:  comments,
+			BackState: stateTaskDetail,
+		}
+	}
+}
+
+func updateDescriptionCmd(c *clickup.Client, taskID, teamID, description string, backState state) tea.Cmd {
+	return func() tea.Msg {
+		if err := c.UpdateDescription(taskID, description); err != nil {
+			return errMsg(err)
+		}
+		task, err := c.GetTask(taskID, teamID)
+		if err != nil {
+			return errMsg(err)
+		}
+		comments, err := fetchCommentsRecursive(taskID, c)
+		if err != nil {
+			return errMsg(err)
+		}
+		return taskDetailMsg{
+			Task:      task,
+			Comments:  comments,
+			BackState: backState,
+		}
 	}
 }
 

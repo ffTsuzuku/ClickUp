@@ -1,4 +1,4 @@
-# ClickUp TUI
+# ToTUI
 
 Keyboard-first ClickUp client for the terminal, built with Bubble Tea.
 

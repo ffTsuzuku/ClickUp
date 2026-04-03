@@ -99,54 +99,26 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.activeList = &m.searchList
 		return m, nil
 	case taskDetailMsg:
-		m.loading = false
-		m.selectedTask = *msg.Task
-		m.detailBackState = msg.BackState
-
-		m.selectedComments = msg.Comments
-
-		wasChecklist := m.state == stateChecklist || m.state == stateConfirmChecklistDelete
-		if m.state != stateTaskDetail && !wasChecklist {
-			m.taskHistory = nil
-		}
-		if wasChecklist {
-			m.flattenChecklists()
-			m.updateChecklistViewportContent()
-		} else {
-			m.state = stateTaskDetail
-			m.prevState = msg.BackState
-			m.updateViewportContent()
-		}
-		if m.selectedTask.ID != "" && m.teamMembersTaskID != m.selectedTask.ID {
-			return m, fetchTaskMembersCmd(m.client, m.selectedTask.ID)
-		}
-		return m, nil
+		return m.applyTaskDetail(msg.Task, msg.Comments, msg.BackState, false)
 	case attachmentUploadedMsg:
-		m.loading = false
-		m.selectedTask = *msg.Task
-		m.selectedComments = msg.Comments
-		m.state = stateTaskDetail
-		m.prevState = msg.BackState
+		_, cmd := m.applyTaskDetail(msg.Task, msg.Comments, msg.BackState, true)
 		m.popupMsg = msg.Popup
-		m.updateViewportContent()
-		return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+		return m, tea.Batch(cmd, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} }))
 	case taskCreatedMsg:
-		m.loading = false
-		newTask := clickup.Task(msg)
-		m.allTasks = append([]clickup.Task{newTask}, m.allTasks...)
+		m.allTasks = msg.Tasks
 		m.applyTaskFilter("")
-
-		if newTask.Parent == nil {
-			m.selectedTask = newTask
-			m.taskHistory = nil
-			m.state = stateTaskDetail
-			m.updateViewportContent()
-		} else {
-
-			m.state = stateTaskDetail
-			m.updateViewportContent()
-		}
-		return m, nil
+		preserveHistory := msg.BackState == stateTaskDetail && msg.Task != nil && msg.Task.ID == m.selectedTask.ID
+		return m.applyTaskDetail(msg.Task, msg.Comments, msg.BackState, preserveHistory)
+	case taskDeletedMsg:
+		m.loading = false
+		m.allTasks = msg.Tasks
+		m.pendingDeleteTaskID = ""
+		m.pendingDeleteTaskName = ""
+		m.applyTaskFilter("")
+		m.state = stateTasks
+		m.activeList = &m.tasksList
+		m.popupMsg = "Deleted task " + msg.Name
+		return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
 	case moveListsReadyMsg:
 		m.loading = false
 		// Flatten for move picker (simpler for now)
@@ -310,17 +282,9 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err == nil && msg.content != "" {
 			content := strings.TrimRight(msg.content, "\n")
 			if m.externalEditTarget == "description" || m.state == stateEditDesc {
-				if err := m.client.UpdateDescription(m.selectedTask.ID, content); err == nil {
-					m.selectedTask.Desc = content
-					m.selectedTask.MarkdownDescription = content
-					for i, t := range m.allTasks {
-						if t.ID == m.selectedTask.ID {
-							m.allTasks[i].Desc = content
-							m.allTasks[i].MarkdownDescription = content
-							break
-						}
-					}
-				}
+				m.loading = true
+				m.loadingMsg = "Updating description..."
+				cmds = append(cmds, tea.Batch(m.spinner.Tick, updateDescriptionCmd(m.client, m.selectedTask.ID, m.selectedTeam, content, m.detailBackState)))
 			} else if m.externalEditTarget == "comment" || m.state == stateEditComment {
 				m.loading = true
 				m.loadingMsg = "Updating comment..."
@@ -459,6 +423,8 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateCreateSubtask(msg)
 	case stateEditComment:
 		return m.updateEditComment(msg)
+	case stateConfirmTaskDelete:
+		return m.updateConfirmTaskDelete(msg)
 	case stateChecklist:
 		return m.updateChecklist(msg)
 	case stateConfirmChecklistDelete:
@@ -543,6 +509,15 @@ func (m *AppModel) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.updateCommandSuggestions()
 				m.updateLayout()
 				return m, textinput.Blink
+			} else if m.state == stateLists {
+				m.prevState = stateLists
+				m.state = stateCommand
+				m.cmdInput.Focus()
+				m.cmdInput.SetValue("/list create ")
+				m.cmdInput.SetCursor(len(m.cmdInput.Value()))
+				m.updateCommandSuggestions()
+				m.updateLayout()
+				return m, textinput.Blink
 			}
 		case "e":
 			if m.state == stateSpaces {
@@ -550,6 +525,20 @@ func (m *AppModel) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.state = stateCommand
 				m.cmdInput.Focus()
 				m.cmdInput.SetValue("/space rename ")
+				m.cmdInput.SetCursor(len(m.cmdInput.Value()))
+				m.updateCommandSuggestions()
+				m.updateLayout()
+				return m, textinput.Blink
+			} else if m.state == stateLists {
+				selected, ok := m.activeList.SelectedItem().(listItem)
+				if !ok {
+					m.popupMsg = "Error: highlight a list to rename"
+					return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+				}
+				m.prevState = stateLists
+				m.state = stateCommand
+				m.cmdInput.Focus()
+				m.cmdInput.SetValue("/list rename " + selected.Name)
 				m.cmdInput.SetCursor(len(m.cmdInput.Value()))
 				m.updateCommandSuggestions()
 				m.updateLayout()
@@ -566,6 +555,32 @@ func (m *AppModel) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.pendingDeleteSpaceName = selected.Name
 				m.prevState = m.state
 				m.state = stateConfirmSpaceDelete
+				return m, nil
+			} else if m.state == stateLists {
+				selected, ok := m.activeList.SelectedItem().(listItem)
+				if !ok {
+					m.popupMsg = "Error: highlight a list to delete"
+					return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+				}
+				m.pendingDeleteListID = selected.ID
+				m.pendingDeleteListName = selected.Name
+				m.pendingDeleteListFolderID = ""
+				if m.selectedFolder != nil {
+					m.pendingDeleteListFolderID = m.selectedFolder.ID
+				}
+				m.prevState = m.state
+				m.state = stateConfirmListDelete
+				return m, nil
+			} else if m.state == stateTasks {
+				selected, ok := m.activeList.SelectedItem().(taskItem)
+				if !ok {
+					m.popupMsg = "Error: highlight a task to delete"
+					return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+				}
+				m.pendingDeleteTaskID = selected.ID
+				m.pendingDeleteTaskName = selected.Name
+				m.prevState = m.state
+				m.state = stateConfirmTaskDelete
 				return m, nil
 			}
 		case "o":
@@ -911,7 +926,7 @@ func (m *AppModel) updateCreateTask(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.state = stateTasks
 				m.loading = true
 				m.loadingMsg = "Creating task..."
-				return m, tea.Batch(m.spinner.Tick, createTaskCmd(m.client, m.selectedList, name, m.currentUserID))
+				return m, tea.Batch(m.spinner.Tick, createTaskCmd(m.client, m.selectedTeam, m.selectedList, name, m.currentUserID))
 			}
 		case tea.KeyEsc:
 			m.taskInput.Blur()
@@ -935,7 +950,7 @@ func (m *AppModel) updateCreateSubtask(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.state = stateTaskDetail
 				m.loading = true
 				m.loadingMsg = "Creating subtask..."
-				return m, tea.Batch(m.spinner.Tick, createSubtaskCmd(m.client, m.selectedList, m.parentTaskID, name, m.currentUserID))
+				return m, tea.Batch(m.spinner.Tick, createSubtaskCmd(m.client, m.selectedTeam, m.selectedList, m.parentTaskID, name, m.currentUserID))
 			}
 		case tea.KeyEsc:
 			m.taskInput.Blur()
@@ -1033,24 +1048,49 @@ func (m *AppModel) updateEditDesc(msg tea.Msg) (tea.Model, tea.Cmd) {
 			desc := m.descInput.Value()
 			m.descInput.Blur()
 			m.state = stateTaskDetail
-			if err := m.client.UpdateDescription(m.selectedTask.ID, desc); err == nil {
-				m.selectedTask.Desc = desc
-				m.selectedTask.MarkdownDescription = desc
-				for i, t := range m.allTasks {
-					if t.ID == m.selectedTask.ID {
-						m.allTasks[i].Desc = desc
-						m.allTasks[i].MarkdownDescription = desc
-						break
-					}
-				}
-			}
-			m.updateViewportContent()
-			return m, nil
+			m.loading = true
+			m.loadingMsg = "Updating description..."
+			return m, tea.Batch(m.spinner.Tick, updateDescriptionCmd(m.client, m.selectedTask.ID, m.selectedTeam, desc, m.detailBackState))
 		}
 	}
 	var cmd tea.Cmd
 	m.descInput, cmd = m.descInput.Update(msg)
 	return m, cmd
+}
+
+func (m *AppModel) applyTaskDetail(task *clickup.Task, comments []clickup.Comment, backState state, preserveHistory bool) (tea.Model, tea.Cmd) {
+	m.loading = false
+	if task == nil {
+		return m, nil
+	}
+
+	previousTaskID := m.selectedTask.ID
+	wasChecklist := m.state == stateChecklist || m.state == stateConfirmChecklistDelete
+
+	m.selectedTask = *task
+	m.detailBackState = backState
+	m.selectedComments = comments
+
+	if !preserveHistory && !wasChecklist {
+		m.taskHistory = nil
+	}
+
+	if wasChecklist {
+		m.flattenChecklists()
+		m.updateChecklistViewportContent()
+	} else {
+		m.state = stateTaskDetail
+		m.prevState = backState
+		m.updateViewportContent()
+		if previousTaskID != m.selectedTask.ID {
+			m.vp.GotoTop()
+		}
+	}
+
+	if m.selectedTask.ID != "" && m.teamMembersTaskID != m.selectedTask.ID {
+		return m, fetchTaskMembersCmd(m.client, m.selectedTask.ID)
+	}
+	return m, nil
 }
 
 func (m *AppModel) updateHelp(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -1132,6 +1172,34 @@ func (m *AppModel) updateConfirmListDelete(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.pendingDeleteListFolderID = ""
 			m.state = m.prevState
 			m.popupMsg = "List deletion cancelled"
+			return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+		}
+	}
+	return m, nil
+}
+
+func (m *AppModel) updateConfirmTaskDelete(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch strings.ToLower(msg.String()) {
+		case "y", "enter":
+			taskID := m.pendingDeleteTaskID
+			taskName := m.pendingDeleteTaskName
+			m.pendingDeleteTaskID = ""
+			m.pendingDeleteTaskName = ""
+			if m.selectedList == "" {
+				m.state = m.prevState
+				m.popupMsg = "Error: select a List first"
+				return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+			}
+			m.loading = true
+			m.loadingMsg = "Deleting task..."
+			return m, tea.Batch(m.spinner.Tick, deleteTaskCmd(m.client, m.selectedTeam, m.selectedList, taskID, taskName))
+		case "n", "esc", "q":
+			m.pendingDeleteTaskID = ""
+			m.pendingDeleteTaskName = ""
+			m.state = m.prevState
+			m.popupMsg = "Task deletion cancelled"
 			return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
 		}
 	}

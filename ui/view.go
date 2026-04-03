@@ -51,6 +51,8 @@ func (m *AppModel) stateLabel() string {
 		return "Create Subtask"
 	case stateEditComment:
 		return "Edit Comment"
+	case stateConfirmTaskDelete:
+		return "Confirm Task Delete"
 	case stateConfirmProfileDelete:
 		return "Confirm Profile Delete"
 	case stateConfirmListDelete:
@@ -870,6 +872,7 @@ func (m *AppModel) updateHelpContent() {
 	b.WriteString("• a                : Create a new Space (in Spaces view)\n")
 	b.WriteString("• e                : Rename highlighted Space (in Spaces view)\n")
 	b.WriteString("• d                : Delete highlighted Space (in Spaces view)\n")
+	b.WriteString("• d                : Delete highlighted task (in Tasks view)\n")
 	b.WriteString("• a / n            : Create a new task (in Tasks view)\n")
 	b.WriteString("• r                : Refresh the current view\n\n")
 
@@ -1062,6 +1065,8 @@ func (m *AppModel) breadcrumb() string {
 		parts = append(parts, "Move Ticket")
 	case stateCommand:
 		return ""
+	case stateConfirmTaskDelete:
+		parts = append(parts, "Tasks", "Delete Task")
 	case stateConfirmProfileDelete:
 		parts = append(parts, "Profiles", "Delete Profile")
 	case stateConfirmListDelete:
@@ -1121,10 +1126,21 @@ func (m *AppModel) View() string {
 			}
 			if lastIdx >= 0 {
 				style := lipgloss.NewStyle().Foreground(ColorSubtext)
-				lines[lastIdx] = strings.TrimRight(lines[lastIdx], " ") + style.Render(" • a/n: new task • r: refresh")
+				lines[lastIdx] = strings.TrimRight(lines[lastIdx], " ") + style.Render(" • a/n: new task • d: delete • r: refresh")
 				view = strings.Join(lines, "\n")
 			}
 		} else if m.state == stateSpaces {
+			lines := strings.Split(view, "\n")
+			lastIdx := len(lines) - 1
+			for lastIdx >= 0 && strings.TrimSpace(lines[lastIdx]) == "" {
+				lastIdx--
+			}
+			if lastIdx >= 0 {
+				style := lipgloss.NewStyle().Foreground(ColorSubtext)
+				lines[lastIdx] = strings.TrimRight(lines[lastIdx], " ") + style.Render(" • a/n: new • e: rename • d: delete • r: refresh")
+				view = strings.Join(lines, "\n")
+			}
+		} else if m.state == stateLists {
 			lines := strings.Split(view, "\n")
 			lastIdx := len(lines) - 1
 			for lastIdx >= 0 && strings.TrimSpace(lines[lastIdx]) == "" {
@@ -1230,6 +1246,18 @@ func (m *AppModel) View() string {
 			Render(
 				TitleStyle.Render("Delete Profile?") + "\n\n" +
 					fmt.Sprintf("Delete profile %q?", m.pendingDeleteProfile) + "\n\n" +
+					lipgloss.NewStyle().Foreground(ColorSubtext).Render("y/enter: yes • n/esc: no"),
+			)
+		mainContent = lipgloss.Place(contentWidth, contentHeight, lipgloss.Center, lipgloss.Center, box)
+	case stateConfirmTaskDelete:
+		contentWidth, contentHeight := m.contentViewportSize()
+		box := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(ColorBorder).
+			Padding(1, 2).
+			Render(
+				TitleStyle.Render("Delete Task?") + "\n\n" +
+					fmt.Sprintf("Delete task %q?", m.pendingDeleteTaskName) + "\n\n" +
 					lipgloss.NewStyle().Foreground(ColorSubtext).Render("y/enter: yes • n/esc: no"),
 			)
 		mainContent = lipgloss.Place(contentWidth, contentHeight, lipgloss.Center, lipgloss.Center, box)

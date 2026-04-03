@@ -29,6 +29,7 @@ const (
 	stateEditDesc
 	stateCreateSubtask
 	stateEditComment
+	stateConfirmTaskDelete
 	stateConfirmProfileDelete
 	stateConfirmListDelete
 	stateConfirmDiscardDesc
@@ -118,6 +119,8 @@ type AppModel struct {
 	mentionQuery              string
 	mentionQueryStart         int
 	mentionQueryEnd           int
+	pendingDeleteTaskID       string
+	pendingDeleteTaskName     string
 	pendingDeleteProfile      string
 	pendingDeleteListID       string
 	pendingDeleteListName     string

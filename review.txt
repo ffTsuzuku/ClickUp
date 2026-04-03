@@ -34,8 +34,6 @@ all space commands in space screen in general.
 - pressing a should begin prompt to add list
 - pressing d should prompt to confirm delete
 - pressing e should prompt to rename
-- profile switch command missing from suggestions
-- profile delete command missing from suggestions
 - update keyboard hotkeys in the bottom
 
 

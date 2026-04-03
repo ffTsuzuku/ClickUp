@@ -29,7 +29,17 @@ type errMsg error
 
 type clearPopupMsg struct{}
 
-type taskCreatedMsg clickup.Task
+type taskCreatedMsg struct {
+	Task      *clickup.Task
+	Tasks     []clickup.Task
+	Comments  []clickup.Comment
+	BackState state
+}
+
+type taskDeletedMsg struct {
+	Tasks []clickup.Task
+	Name  string
+}
 
 type moveListsReadyMsg *clickup.SpaceHierarchy
 
