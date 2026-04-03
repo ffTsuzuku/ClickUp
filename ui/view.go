@@ -127,10 +127,27 @@ func (m *AppModel) buildChecklistView() (string, []int, []int) {
 	var starts []int
 	var ends []int
 	currentLine := 0
+	showNewChecklistInput := m.isEditingChecklistItem() && m.checklistEditingItem == nil
+
+	renderEditInput := func() {
+		input := m.checklistEditInput.View()
+		if input == "" {
+			return
+		}
+		b.WriteString(input)
+		b.WriteString("\n")
+		currentLine++
+	}
 
 	if len(m.selectedTask.Checklists) == 0 {
 		b.WriteString(TitleStyle.Render("Checklists"))
 		b.WriteString("\n\n")
+		currentLine += 2
+		if showNewChecklistInput {
+			renderEditInput()
+			b.WriteString("\n")
+			currentLine++
+		}
 		b.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext).Render("No checklists. Press 'n' to create one."))
 		b.WriteString("\n\n")
 		b.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext).Italic(true).Render("Press L or Esc to go back"))
@@ -140,6 +157,11 @@ func (m *AppModel) buildChecklistView() (string, []int, []int) {
 	b.WriteString(TitleStyle.Render("Checklists"))
 	b.WriteString("\n\n")
 	currentLine += 3
+	if showNewChecklistInput {
+		renderEditInput()
+		b.WriteString("\n")
+		currentLine++
+	}
 
 	indent := "  "
 	checkboxUnchecked := lipgloss.NewStyle().Foreground(ColorPrimary).Render("[ ]")
@@ -161,6 +183,9 @@ func (m *AppModel) buildChecklistView() (string, []int, []int) {
 			b.WriteString("\n")
 			currentLine++
 			ends = append(ends, currentLine-1)
+			if isSelected && m.isEditingChecklistItem() && m.checklistEditingItem != nil {
+				renderEditInput()
+			}
 		} else {
 			checkbox := checkboxUnchecked
 			itemStyle := ChecklistItemStyle
@@ -197,6 +222,9 @@ func (m *AppModel) buildChecklistView() (string, []int, []int) {
 			b.WriteString("\n")
 			currentLine++
 			ends = append(ends, currentLine-1)
+			if isSelected && m.isEditingChecklistItem() && m.checklistEditingItem != nil {
+				renderEditInput()
+			}
 		}
 	}
 
@@ -871,7 +899,7 @@ func (m *AppModel) renderHeader() string {
   \/_____/   \/_____/   \/_/   \/_____/   \/_/\/_/   \/_____/   \/_/`
 
 	banner := HeaderBannerStyle.Foreground(ColorPrimary).Render(ascii)
-	version := lipgloss.NewStyle().Foreground(ColorSubtext).Render("v1.2.0")
+	version := lipgloss.NewStyle().Foreground(ColorSubtext).Render("v0.5.0")
 
 	infoStyle := lipgloss.NewStyle().Foreground(ColorText)
 	userLine := infoStyle.Render("Signed in as: ") + ColorSecondaryStyle.Render(m.currentUser)

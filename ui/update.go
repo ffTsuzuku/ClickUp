@@ -115,8 +115,8 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.state = stateTaskDetail
 			m.prevState = msg.BackState
+			m.updateViewportContent()
 		}
-		m.updateViewportContent()
 		if m.selectedTask.ID != "" && m.teamMembersTaskID != m.selectedTask.ID {
 			return m, fetchTaskMembersCmd(m.client, m.selectedTask.ID)
 		}
