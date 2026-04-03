@@ -169,6 +169,79 @@ func expandUserPath(path string) string {
 	return path
 }
 
+func splitQuotedFields(raw string) ([]string, error) {
+	var fields []string
+	var current strings.Builder
+	var quote rune
+	inField := false
+	escaped := false
+
+	for _, r := range raw {
+		switch {
+		case escaped:
+			current.WriteRune(r)
+			inField = true
+			escaped = false
+		case r == '\\':
+			escaped = true
+		case quote != 0:
+			if r == quote {
+				quote = 0
+			} else {
+				current.WriteRune(r)
+			}
+			inField = true
+		case r == '"' || r == '\'':
+			quote = r
+			inField = true
+		case unicode.IsSpace(r):
+			if inField {
+				fields = append(fields, current.String())
+				current.Reset()
+				inField = false
+			}
+		default:
+			current.WriteRune(r)
+			inField = true
+		}
+	}
+
+	if escaped {
+		current.WriteRune('\\')
+	}
+	if quote != 0 {
+		return nil, fmt.Errorf("unterminated quote")
+	}
+	if inField {
+		fields = append(fields, current.String())
+	}
+	return fields, nil
+}
+
+func parseProfileCreateInput(raw string) (string, string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", "", nil
+	}
+
+	fields, err := splitQuotedFields(raw)
+	if err != nil {
+		return "", "", err
+	}
+	if len(fields) == 0 {
+		return "", "", nil
+	}
+	if len(fields) == 1 {
+		return fields[0], "", nil
+	}
+
+	hasQuotes := strings.ContainsAny(raw, `"'`)
+	if hasQuotes {
+		return fields[0], strings.Join(fields[1:], " "), nil
+	}
+	return fields[0], strings.Join(fields[1:], " "), nil
+}
+
 func parseSearchQuery(raw string) searchQuery {
 	raw = strings.TrimSpace(raw)
 	parts := strings.Fields(raw)

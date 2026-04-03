@@ -393,8 +393,7 @@ func (m *AppModel) updateCommandSuggestions() {
 	}
 
 	sugs = append(sugs, Suggestion{"/profile", "Manage ClickUp profiles"})
-	sugs = append(sugs, Suggestion{"/profile list", "List available ClickUp profiles"})
-	sugs = append(sugs, Suggestion{"/profile create ", "Create a new empty profile and switch to it"})
+	sugs = append(sugs, Suggestion{"/profile create ", "Create a profile and optionally set its API key"})
 	sugs = append(sugs, Suggestion{"/profile switch ", "Switch to another profile"})
 	sugs = append(sugs, Suggestion{"/profile delete ", "Delete a profile with typed confirmation"})
 	sugs = append(sugs, Suggestion{"/profile save ", "Save current settings as a named profile"})
@@ -787,8 +786,7 @@ func (m *AppModel) updateHelpContent() {
 	b.WriteString("• /list create <name>      : Create a new List in the current Folder or Space\n")
 	b.WriteString("• /list rename <name>      : Rename the highlighted List in the list view\n")
 	b.WriteString("• /list delete             : Delete the highlighted List after confirmation\n")
-	b.WriteString("• /profile list            : Show available profiles\n")
-	b.WriteString("• /profile create <name>   : Create a new empty profile and switch to it\n")
+	b.WriteString("• /profile create <name> [key] : Create a profile and optionally set its API key\n")
 	b.WriteString("• /profile switch <name>   : Switch to a saved profile\n")
 	b.WriteString("• /profile delete <name>   : Delete a profile with a yes/no confirmation prompt\n")
 	b.WriteString("• /profile save <name>     : Save current settings as a profile and switch to it\n")

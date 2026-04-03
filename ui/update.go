@@ -1776,17 +1776,12 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.state = stateConfirmListDelete
 				return m, nil
-			} else if strings.HasPrefix(val, "/profile list") {
-				names := m.cfg.ProfileNames()
-				for i, name := range names {
-					if name == m.cfg.ActiveProfileName() {
-						names[i] = "*" + name
-					}
-				}
-				m.popupMsg = "Profiles: " + strings.Join(names, ", ")
-				return m, tea.Tick(time.Second*3, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
 			} else if strings.HasPrefix(val, "/profile create ") {
-				name := strings.TrimSpace(strings.TrimPrefix(val, "/profile create "))
+				name, token, err := parseProfileCreateInput(strings.TrimSpace(strings.TrimPrefix(val, "/profile create ")))
+				if err != nil {
+					m.popupMsg = "Error: invalid /profile create syntax"
+					return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+				}
 				if name == "" {
 					m.popupMsg = "Error: profile name required"
 					return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
@@ -1798,6 +1793,16 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if err := config.SaveConfig(m.cfg); err != nil {
 					m.popupMsg = "Error: failed to create profile"
 					return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+				}
+				if token != "" {
+					m.cfg.ClickupAPIKey = token
+					if err := config.SaveConfig(m.cfg); err != nil {
+						m.popupMsg = "Error: failed to save API key"
+						return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+					}
+					m.loading = true
+					m.loadingMsg = "Loading profile " + name + "..."
+					return m, tea.Batch(m.spinner.Tick, reloadProfileCmd(m.cfg, m.width, m.height, "Created and switched to profile "+name))
 				}
 				reloaded := newBaseModel(m.cfg)
 				reloaded.width = m.width
