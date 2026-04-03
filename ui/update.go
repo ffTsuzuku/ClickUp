@@ -342,6 +342,14 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			fetchCommentsCmd(m.client, m.selectedTask.ID),
 			tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} }),
 		)
+	case commentDeletedMsg:
+		m.replyToCommentID = ""
+		m.replyToUser = ""
+		m.popupMsg = "Comment deleted!"
+		return m, tea.Batch(
+			fetchCommentsCmd(m.client, m.selectedTask.ID),
+			tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} }),
+		)
 
 	case checklistItemUpdatedMsg:
 		m.loading = false
@@ -357,6 +365,11 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case commentsMsg:
 		m.loading = false
 		m.selectedComments = msg
+		if len(m.selectedComments) == 0 {
+			m.commentSelectedIdx = 0
+		} else if m.commentSelectedIdx >= len(m.selectedComments) {
+			m.commentSelectedIdx = len(m.selectedComments) - 1
+		}
 		m.updateViewportContent()
 		return m, nil
 	case errMsg:

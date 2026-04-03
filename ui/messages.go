@@ -107,6 +107,8 @@ type teamMembersMsg []clickup.Member
 
 type commentAddedMsg struct{}
 
+type commentDeletedMsg struct{}
+
 type checklistItemUpdatedMsg struct{}
 
 type checklistCreatedMsg struct{}

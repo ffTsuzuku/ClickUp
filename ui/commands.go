@@ -346,7 +346,7 @@ func deleteCommentCmd(c *clickup.Client, commentID string) tea.Cmd {
 		if err := c.DeleteComment(commentID); err != nil {
 			return errMsg(err)
 		}
-		return commentAddedMsg{}
+		return commentDeletedMsg{}
 	}
 }
 
