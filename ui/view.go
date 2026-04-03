@@ -7,6 +7,18 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+func (m *AppModel) contentViewportSize() (int, int) {
+	width := m.vp.Width
+	height := m.vp.Height
+	if width <= 0 {
+		width = m.width
+	}
+	if height <= 0 {
+		height = m.height
+	}
+	return width, height
+}
+
 func (m *AppModel) stateLabel() string {
 	switch m.state {
 	case stateTeams:
@@ -105,6 +117,16 @@ func (m *AppModel) renderEditDesc() string {
 
 func (m *AppModel) renderChecklistView() string {
 	var b strings.Builder
+	content, _, _ := m.buildChecklistView()
+	b.WriteString(content)
+	return b.String()
+}
+
+func (m *AppModel) buildChecklistView() (string, []int, []int) {
+	var b strings.Builder
+	var starts []int
+	var ends []int
+	currentLine := 0
 
 	if len(m.selectedTask.Checklists) == 0 {
 		b.WriteString(TitleStyle.Render("Checklists"))
@@ -112,11 +134,12 @@ func (m *AppModel) renderChecklistView() string {
 		b.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext).Render("No checklists. Press 'n' to create one."))
 		b.WriteString("\n\n")
 		b.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext).Italic(true).Render("Press L or Esc to go back"))
-		return b.String()
+		return b.String(), nil, nil
 	}
 
 	b.WriteString(TitleStyle.Render("Checklists"))
 	b.WriteString("\n\n")
+	currentLine += 3
 
 	indent := "  "
 	checkboxUnchecked := lipgloss.NewStyle().Foreground(ColorPrimary).Render("[ ]")
@@ -133,8 +156,11 @@ func (m *AppModel) renderChecklistView() string {
 			} else {
 				line = ChecklistHeaderStyle.Render(line)
 			}
+			starts = append(starts, currentLine)
 			b.WriteString(line)
 			b.WriteString("\n")
+			currentLine++
+			ends = append(ends, currentLine-1)
 		} else {
 			checkbox := checkboxUnchecked
 			itemStyle := ChecklistItemStyle
@@ -162,18 +188,23 @@ func (m *AppModel) renderChecklistView() string {
 				}
 				cbStr := cbStyle.Render(cbText)
 
+				starts = append(starts, currentLine)
 				b.WriteString(fmt.Sprintf("%s%s %s", textStyle.Render(prefix), cbStr, textStyle.Render(name)))
 			} else {
+				starts = append(starts, currentLine)
 				b.WriteString(fmt.Sprintf("%s%s %s", itemStyle.Render(prefix), checkbox, itemStyle.Render(name)))
 			}
 			b.WriteString("\n")
+			currentLine++
+			ends = append(ends, currentLine-1)
 		}
 	}
 
 	b.WriteString("\n")
 	b.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext).Italic(true).Render("↑↓ Navigate | Space Toggle | Tab/Shift+Tab Indent | a Add | r Rename | d Delete | n New | q Back"))
+	currentLine += 2
 
-	return b.String()
+	return b.String(), starts, ends
 }
 
 func (m *AppModel) renderConfirmChecklistDelete() string {
@@ -188,6 +219,16 @@ func (m *AppModel) renderConfirmChecklistDelete() string {
 
 func (m *AppModel) renderCommentsView() string {
 	var b strings.Builder
+	content, _, _ := m.buildCommentsView()
+	b.WriteString(content)
+	return b.String()
+}
+
+func (m *AppModel) buildCommentsView() (string, []int, []int) {
+	var b strings.Builder
+	var starts []int
+	var ends []int
+	currentLine := 0
 
 	if len(m.selectedComments) == 0 {
 		b.WriteString(TitleStyle.Render("Comments"))
@@ -195,11 +236,12 @@ func (m *AppModel) renderCommentsView() string {
 		b.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext).Render("No comments. Press 'c' to create one."))
 		b.WriteString("\n\n")
 		b.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext).Italic(true).Render("Press C or Esc to go back"))
-		return b.String()
+		return b.String(), nil, nil
 	}
 
 	b.WriteString(TitleStyle.Render(fmt.Sprintf("Comments (%d)", len(m.selectedComments))))
 	b.WriteString("\n\n")
+	currentLine += 3
 
 	commentWidth := m.width - 4
 	if commentWidth < 24 {
@@ -252,14 +294,19 @@ func (m *AppModel) renderCommentsView() string {
 			commentStyle = commentStyle.MarginLeft(2)
 		}
 
-		b.WriteString(commentStyle.Render(header + "\n" + cardDivider + "\n" + message))
+		renderedComment := commentStyle.Render(header + "\n" + cardDivider + "\n" + message)
+		starts = append(starts, currentLine)
+		b.WriteString(renderedComment)
 		b.WriteString("\n\n")
+		currentLine += lipgloss.Height(renderedComment) + 2
+		ends = append(ends, currentLine-1)
 	}
 
 	b.WriteString("\n")
 	b.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext).Italic(true).Render("↑↓ Navigate | c Add | r Reply | e Edit | d Delete | q Back"))
+	currentLine += 2
 
-	return b.String()
+	return b.String(), starts, ends
 }
 
 func (m *AppModel) renderConfirmCommentDelete() string {
@@ -631,6 +678,50 @@ func (m *AppModel) updateViewportContent() {
 	m.vp.SetContent(b.String())
 }
 
+func (m *AppModel) updateCommentsViewportContent() {
+	content, starts, ends := m.buildCommentsView()
+	m.vp.SetContent(content)
+
+	if len(starts) == 0 || m.commentSelectedIdx < 0 || m.commentSelectedIdx >= len(starts) {
+		return
+	}
+
+	selectedStart := starts[m.commentSelectedIdx]
+	selectedEnd := ends[m.commentSelectedIdx]
+	visibleStart := m.vp.YOffset
+	visibleEnd := visibleStart + max(0, m.vp.Height-1)
+
+	if selectedStart < visibleStart {
+		m.vp.SetYOffset(selectedStart)
+		return
+	}
+	if selectedEnd > visibleEnd {
+		m.vp.SetYOffset(selectedEnd - max(0, m.vp.Height-1))
+	}
+}
+
+func (m *AppModel) updateChecklistViewportContent() {
+	content, starts, ends := m.buildChecklistView()
+	m.vp.SetContent(content)
+
+	if len(starts) == 0 || m.checklistSelectedIdx < 0 || m.checklistSelectedIdx >= len(starts) {
+		return
+	}
+
+	selectedStart := starts[m.checklistSelectedIdx]
+	selectedEnd := ends[m.checklistSelectedIdx]
+	visibleStart := m.vp.YOffset
+	visibleEnd := visibleStart + max(0, m.vp.Height-1)
+
+	if selectedStart < visibleStart {
+		m.vp.SetYOffset(selectedStart)
+		return
+	}
+	if selectedEnd > visibleEnd {
+		m.vp.SetYOffset(selectedEnd - max(0, m.vp.Height-1))
+	}
+}
+
 func (m *AppModel) updateHelpContent() {
 	var b strings.Builder
 
@@ -693,10 +784,10 @@ func (m *AppModel) updateHelpContent() {
 	b.WriteString("• /attach download <n> : Trigger attachment download\n")
 	b.WriteString("• /attach share <n>    : Copy attachment URL\n")
 	b.WriteString("• /attach upload        : Open a file browser to upload an attachment\n")
-	b.WriteString("• c                : Add a comment\n")
-	b.WriteString("• A                : Copy ticket context for AI prompting\n")
-	b.WriteString("• t                : Create a new subtask\n")
-	b.WriteString("• s                : Copy ticket URL to clipboard\n")
+		b.WriteString("• c                : Add a comment\n")
+		b.WriteString("• A                : Copy ticket context for AI prompting\n")
+		b.WriteString("• a                : Create a new subtask\n")
+		b.WriteString("• s                : Copy ticket URL to clipboard\n")
 	b.WriteString("• r                : Refresh current view from API\n")
 	b.WriteString("• L                : Open checklist view\n")
 	b.WriteString("• C                : Open comments view\n")
@@ -1006,16 +1097,18 @@ func (m *AppModel) View() string {
 		}
 		mainContent = view
 	case stateTaskDetail:
-		hint := lipgloss.NewStyle().Foreground(ColorSubtext).Render("q: back • a/n: new task • c: comment • t: subtask • o: open • s: copy • r: refresh")
+		hint := lipgloss.NewStyle().Foreground(ColorSubtext).Render("q: back • a: subtask • c: comment • o: open • s: share • r: refresh")
 		mainContent = m.vp.View() + "\n" + hint
 	case stateChecklist:
-		mainContent = lipgloss.Place(m.width, m.height-8, lipgloss.Left, lipgloss.Top, m.renderChecklistView()+"\n\n"+m.checklistEditInput.View(), lipgloss.WithWhitespaceChars(" "))
+		mainContent = m.vp.View()
 	case stateConfirmChecklistDelete:
-		mainContent = lipgloss.Place(m.width, m.height-8, lipgloss.Center, lipgloss.Center, m.renderConfirmChecklistDelete())
+		contentWidth, contentHeight := m.contentViewportSize()
+		mainContent = lipgloss.Place(contentWidth, contentHeight, lipgloss.Center, lipgloss.Center, m.renderConfirmChecklistDelete())
 	case stateCommentsView:
-		mainContent = lipgloss.Place(m.width, m.height-8, lipgloss.Left, lipgloss.Top, m.renderCommentsView(), lipgloss.WithWhitespaceChars(" "))
+		mainContent = m.vp.View()
 	case stateConfirmCommentDelete:
-		mainContent = lipgloss.Place(m.width, m.height-8, lipgloss.Center, lipgloss.Center, m.renderConfirmCommentDelete())
+		contentWidth, contentHeight := m.contentViewportSize()
+		mainContent = lipgloss.Place(contentWidth, contentHeight, lipgloss.Center, lipgloss.Center, m.renderConfirmCommentDelete())
 	case stateHelp:
 		mainContent = m.vp.View()
 	case stateComment:
@@ -1025,7 +1118,7 @@ func (m *AppModel) View() string {
 		}
 		bg := m.vp.View()
 		if m.commentReturnState == stateCommentsView {
-			bg = m.renderCommentsView()
+			bg = m.vp.View()
 		}
 		mainContent = bg + "\n\n" + header + "\n" + m.commentInput.View() + "\n(Ctrl+S to submit, Ctrl+E for Vim, Esc to cancel)"
 	case stateCreateTask:
@@ -1054,10 +1147,11 @@ func (m *AppModel) View() string {
 	case stateEditComment:
 		bg := m.vp.View()
 		if m.commentReturnState == stateCommentsView {
-			bg = m.renderCommentsView()
+			bg = m.vp.View()
 		}
 		mainContent = bg + "\n\n" + TitleStyle.Render("Editing Comment:") + "\n" + m.commentInput.View() + "\n(Ctrl+S to save, Ctrl+E for Vim, Esc to cancel)"
 	case stateConfirmProfileDelete:
+		contentWidth, contentHeight := m.contentViewportSize()
 		box := lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(ColorBorder).
@@ -1067,8 +1161,9 @@ func (m *AppModel) View() string {
 					fmt.Sprintf("Delete profile %q?", m.pendingDeleteProfile) + "\n\n" +
 					lipgloss.NewStyle().Foreground(ColorSubtext).Render("y/enter: yes • n/esc: no"),
 			)
-		mainContent = lipgloss.Place(m.width, m.height-8, lipgloss.Center, lipgloss.Center, box)
+		mainContent = lipgloss.Place(contentWidth, contentHeight, lipgloss.Center, lipgloss.Center, box)
 	case stateConfirmListDelete:
+		contentWidth, contentHeight := m.contentViewportSize()
 		box := lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(ColorBorder).
@@ -1078,8 +1173,9 @@ func (m *AppModel) View() string {
 					fmt.Sprintf("Delete list %q?", m.pendingDeleteListName) + "\n\n" +
 					lipgloss.NewStyle().Foreground(ColorSubtext).Render("y/enter: yes • n/esc: no"),
 			)
-		mainContent = lipgloss.Place(m.width, m.height-8, lipgloss.Center, lipgloss.Center, box)
+		mainContent = lipgloss.Place(contentWidth, contentHeight, lipgloss.Center, lipgloss.Center, box)
 	case stateConfirmSpaceDelete:
+		contentWidth, contentHeight := m.contentViewportSize()
 		box := lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(ColorBorder).
@@ -1089,8 +1185,9 @@ func (m *AppModel) View() string {
 					fmt.Sprintf("Delete space %q?", m.pendingDeleteSpaceName) + "\n\n" +
 					lipgloss.NewStyle().Foreground(ColorSubtext).Render("y/enter: yes • n/esc: no"),
 			)
-		mainContent = lipgloss.Place(m.width, m.height-8, lipgloss.Center, lipgloss.Center, box)
+		mainContent = lipgloss.Place(contentWidth, contentHeight, lipgloss.Center, lipgloss.Center, box)
 	case stateConfirmDiscardDesc:
+		contentWidth, contentHeight := m.contentViewportSize()
 		box := lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(ColorBorder).
@@ -1100,9 +1197,13 @@ func (m *AppModel) View() string {
 					"Your unsaved description edits will be lost." + "\n\n" +
 					lipgloss.NewStyle().Foreground(ColorSubtext).Render("y/enter: discard • n/esc: keep editing"),
 			)
-		mainContent = lipgloss.Place(m.width, m.height-8, lipgloss.Center, lipgloss.Center, box)
+		mainContent = lipgloss.Place(contentWidth, contentHeight, lipgloss.Center, lipgloss.Center, box)
 	case stateCommand:
 		if m.prevState == stateTaskDetail || m.prevState == stateHelp {
+			mainContent = m.vp.View()
+		} else if m.prevState == stateChecklist || m.prevState == stateConfirmChecklistDelete {
+			mainContent = m.vp.View()
+		} else if m.prevState == stateCommentsView || m.prevState == stateConfirmCommentDelete {
 			mainContent = m.vp.View()
 		} else {
 			mainContent = m.activeList.View()

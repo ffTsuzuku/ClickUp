@@ -111,6 +111,7 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if wasChecklist {
 			m.flattenChecklists()
+			m.updateChecklistViewportContent()
 		} else {
 			m.state = stateTaskDetail
 			m.prevState = msg.BackState
@@ -370,7 +371,11 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else if m.commentSelectedIdx >= len(m.selectedComments) {
 			m.commentSelectedIdx = len(m.selectedComments) - 1
 		}
-		m.updateViewportContent()
+		if m.state == stateCommentsView || m.commentReturnState == stateCommentsView {
+			m.updateCommentsViewportContent()
+		} else {
+			m.updateViewportContent()
+		}
 		return m, nil
 	case errMsg:
 		m.loading = false
@@ -683,7 +688,7 @@ func (m *AppModel) updateDetail(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, textinput.Blink
 		case "A":
 			return m, m.copyTaskForAI()
-		case "t":
+		case "a":
 			m.parentTaskID = m.selectedTask.ID
 			m.state = stateCreateSubtask
 			m.taskInput.SetValue("")
@@ -727,6 +732,7 @@ func (m *AppModel) updateDetail(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.checklistSelectedIdx = 0
 				m.checklistEditingItem = nil
 				m.state = stateChecklist
+				m.updateChecklistViewportContent()
 				return m, nil
 			}
 			m.popupMsg = "No checklists on this task. Press 'n' from command mode to create one."
@@ -734,6 +740,7 @@ func (m *AppModel) updateDetail(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "C":
 			m.commentSelectedIdx = 0
 			m.state = stateCommentsView
+			m.updateCommentsViewportContent()
 			return m, nil
 		}
 	}
@@ -1158,11 +1165,13 @@ func (m *AppModel) updateChecklist(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.checklistEditInput.SetValue("")
 				m.checklistEditInput.Blur()
 				m.checklistEditingItem = nil
+				m.updateChecklistViewportContent()
 				return m, nil
 			}
 
 			var cmd tea.Cmd
 			m.checklistEditInput, cmd = m.checklistEditInput.Update(msg)
+			m.updateChecklistViewportContent()
 			return m, cmd
 		}
 
@@ -1178,12 +1187,14 @@ func (m *AppModel) updateChecklist(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.checklistSelectedIdx > 0 {
 				m.checklistSelectedIdx--
 			}
+			m.updateChecklistViewportContent()
 			return m, nil
 
 		case "down", "j":
 			if m.checklistSelectedIdx < len(m.checklistViewItems)-1 {
 				m.checklistSelectedIdx++
 			}
+			m.updateChecklistViewportContent()
 			return m, nil
 
 		case "tab":
@@ -1284,6 +1295,7 @@ func (m *AppModel) updateChecklist(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.checklistEditInput.SetValue(m.checklistEditOriginal)
 				m.checklistEditInput.Focus()
 				m.checklistEditInput.SetCursor(len(m.checklistEditInput.Value()))
+				m.updateChecklistViewportContent()
 				return m, textinput.Blink
 			}
 			return m, nil
@@ -1296,6 +1308,7 @@ func (m *AppModel) updateChecklist(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.checklistEditInput.Placeholder = "New item name..."
 				m.checklistEditInput.Focus()
 				m.checklistEditInput.SetCursor(0)
+				m.updateChecklistViewportContent()
 				return m, textinput.Blink
 			}
 			return m, nil
@@ -1308,6 +1321,7 @@ func (m *AppModel) updateChecklist(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.checklistEditInput.Placeholder = "Name..."
 				m.checklistEditInput.Focus()
 				m.checklistEditInput.SetCursor(len(m.checklistEditInput.Value()))
+				m.updateChecklistViewportContent()
 				return m, textinput.Blink
 			}
 			return m, nil
@@ -1360,12 +1374,13 @@ func (m *AppModel) updateChecklist(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.checklistEditInput.SetCursor(0)
 			m.checklistEditingItem = nil
 			m.checklistPendingDelete = clickup.Checklist{}
+			m.updateChecklistViewportContent()
 			return m, textinput.Blink
 		}
 	}
 
 	var cmd tea.Cmd
-	m.checklistEditInput, cmd = m.checklistEditInput.Update(msg)
+	m.vp, cmd = m.vp.Update(msg)
 	return m, cmd
 }
 
@@ -1377,10 +1392,12 @@ func (m *AppModel) updateCommentsView(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.commentSelectedIdx > 0 {
 				m.commentSelectedIdx--
 			}
+			m.updateCommentsViewportContent()
 		case "down", "j":
 			if m.commentSelectedIdx < len(m.selectedComments)-1 {
 				m.commentSelectedIdx++
 			}
+			m.updateCommentsViewportContent()
 		case "c":
 			m.commentReturnState = m.state
 			m.state = stateComment
@@ -1408,15 +1425,23 @@ func (m *AppModel) updateCommentsView(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "d":
 			if len(m.selectedComments) > 0 && m.commentSelectedIdx >= 0 {
+				if m.selectedComments[m.commentSelectedIdx].Parent != nil && *m.selectedComments[m.commentSelectedIdx].Parent != "" {
+					m.popupMsg = "Thread replies cannot be deleted via the ClickUp API"
+					return m, tea.Tick(time.Second*3, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+				}
 				m.state = stateConfirmCommentDelete
 				return m, nil
 			}
 		case "esc", "q", "left":
 			m.state = stateTaskDetail
+			m.updateViewportContent()
 			return m, nil
 		}
 	}
-	return m, nil
+
+	var cmd tea.Cmd
+	m.vp, cmd = m.vp.Update(msg)
+	return m, cmd
 }
 
 func (m *AppModel) updateConfirmCommentDelete(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -1426,6 +1451,11 @@ func (m *AppModel) updateConfirmCommentDelete(msg tea.Msg) (tea.Model, tea.Cmd) 
 		case "y":
 			if m.commentSelectedIdx >= 0 && m.commentSelectedIdx < len(m.selectedComments) {
 				c := m.selectedComments[m.commentSelectedIdx]
+				if c.Parent != nil && *c.Parent != "" {
+					m.popupMsg = "Thread replies cannot be deleted via the ClickUp API"
+					m.state = stateCommentsView
+					return m, tea.Tick(time.Second*3, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+				}
 				m.loading = true
 				m.loadingMsg = "Deleting comment..."
 				m.state = stateCommentsView
@@ -2098,6 +2128,10 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 							comment := m.selectedComments[idx-1]
 							action := strings.ToLower(parts[1])
 							if action == "delete" || action == "del" {
+								if comment.Parent != nil && *comment.Parent != "" {
+									m.popupMsg = "Thread replies cannot be deleted via the ClickUp API"
+									return m, tea.Tick(time.Second*3, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+								}
 								m.loading = true
 								m.loadingMsg = "Deleting comment..."
 								m.state = stateTaskDetail

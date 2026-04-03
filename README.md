@@ -16,7 +16,7 @@ ClickUp TUI is a high-performance terminal application designed to bring your wo
 - **🏗️ Task Management:** 
   - Quick-add (`a`/`n`) and delete (`/delete`) tickets.
   - Move tickets between lists using an interactive picker (`/move`).
-  - Create subtasks (`t`) and navigate existing ones (`1-9`).
+  - Create subtasks (`a`) and navigate existing ones (`1-9`).
 - **💬 Community & Effort:** Seamlessly add comments (`c`) and update story points or status.
 - **📎 Clipboard Magic:** Copy ticket URLs instantly with `s` or `/share` to your system clipboard.
 - **🛠️ Smart Defaults:** Save your favorite Workspace, Space, List, or Assignee filter to auto-load on startup with `/default set`.
@@ -67,7 +67,7 @@ The application stores settings in `~/.config/totui/totui.json`. On the first ru
 - `c`: Add comment
 - `e`: Edit description (inline editor)
 - `E`: Edit description in external `$EDITOR` (e.g., Vim)
-- `t`: Create new subtask
+- `a`: Create new subtask
 - `s`: Copy link to clipboard
 - `r`: Refresh current view
 
