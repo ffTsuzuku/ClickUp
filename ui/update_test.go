@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/tsuzuku/clickup-tui/clickup"
 	"github.com/tsuzuku/clickup-tui/config"
 )
@@ -103,5 +104,45 @@ func TestTaskCreatedMsgShowsCreatedTaskDetail(t *testing.T) {
 	}
 	if !strings.Contains(got.vp.View(), createdTask.Name) {
 		t.Fatalf("viewport does not show created task name: %q", got.vp.View())
+	}
+}
+
+func TestCommandEnterExecutesTypedChecklistAddNameThatMatchesSuggestion(t *testing.T) {
+	m := newTestModel(t)
+	m.state = stateCommand
+	m.prevState = stateTaskDetail
+	m.selectedTask = makeTask("task-1", "Task")
+	m.updateCommandSuggestions()
+	m.cmdInput.SetValue("/checklist add checklist")
+	m.filterSuggestions()
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(*AppModel)
+
+	if got.loadingMsg != "Creating checklist..." {
+		t.Fatalf("loadingMsg = %q, want %q", got.loadingMsg, "Creating checklist...")
+	}
+	if got.state != stateTaskDetail {
+		t.Fatalf("state = %v, want %v", got.state, stateTaskDetail)
+	}
+}
+
+func TestCommandEnterExecutesTypedChecklistAddNameThatMatchesOtherCommand(t *testing.T) {
+	m := newTestModel(t)
+	m.state = stateCommand
+	m.prevState = stateTaskDetail
+	m.selectedTask = makeTask("task-1", "Task")
+	m.updateCommandSuggestions()
+	m.cmdInput.SetValue("/checklist add list")
+	m.filterSuggestions()
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(*AppModel)
+
+	if got.loadingMsg != "Creating checklist..." {
+		t.Fatalf("loadingMsg = %q, want %q", got.loadingMsg, "Creating checklist...")
+	}
+	if got.state != stateTaskDetail {
+		t.Fatalf("state = %v, want %v", got.state, stateTaskDetail)
 	}
 }

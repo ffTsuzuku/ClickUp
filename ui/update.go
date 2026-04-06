@@ -1685,10 +1685,6 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyEnter:
 			val := m.cmdInput.Value()
 
-			if len(m.filteredSuggest) > 0 && m.suggestIdx >= 0 {
-				val = m.filteredSuggest[m.suggestIdx].Text
-			}
-
 			m.cmdInput.SetValue("")
 			m.cmdInput.Blur()
 			m.state = m.prevState
