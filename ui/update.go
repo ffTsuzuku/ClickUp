@@ -721,7 +721,7 @@ func (m *AppModel) updateDetail(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.taskInput.Focus()
 			return m, textinput.Blink
 		case "s":
-			return m, m.copySelectedChecklistContent()
+			return m, m.copyTaskURL()
 		case "1", "2", "3", "4", "5", "6", "7", "8", "9":
 			subtasks := m.getSubtasks(m.selectedTask.ID)
 			idx := int(msg.String()[0] - '1')

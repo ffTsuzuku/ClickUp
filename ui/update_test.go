@@ -201,6 +201,32 @@ func TestTaskDetailParentShortcutReplacesImmediateParentHistoryEntry(t *testing.
 	}
 }
 
+func TestTaskDetailShareShortcutCopiesTaskURL(t *testing.T) {
+	m := newTestModel(t)
+	m.state = stateTaskDetail
+	m.selectedTask = makeTask("task-1", "Task")
+	m.selectedTask.URL = "https://app.clickup.com/t/abc123"
+	m.checklistViewItems = []checklistViewItem{
+		{
+			itemType: checklistTypeHeader,
+			checklist: clickup.Checklist{
+				Name: "Should not be copied",
+			},
+		},
+	}
+	m.checklistSelectedIdx = 0
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	got := updated.(*AppModel)
+
+	if got.popupMsg != "Copied URL to clipboard" {
+		t.Fatalf("popupMsg = %q, want %q", got.popupMsg, "Copied URL to clipboard")
+	}
+	if cmd == nil {
+		t.Fatal("cmd = nil, want clear popup command")
+	}
+}
+
 func TestCommandEnterExecutesTypedChecklistAddNameThatMatchesOtherCommand(t *testing.T) {
 	m := newTestModel(t)
 	m.state = stateCommand
