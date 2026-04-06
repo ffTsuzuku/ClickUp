@@ -467,3 +467,31 @@ func (m *AppModel) availableStatuses() []string {
 
 	return statuses
 }
+
+func (m *AppModel) taskFromCursor() (clickup.Task, bool) {
+	if m.activeList == nil {
+		return clickup.Task{}, false
+	}
+	selected, ok := m.activeList.SelectedItem().(taskItem)
+	if !ok {
+		return clickup.Task{}, false
+	}
+	return clickup.Task(selected), true
+}
+
+func (m *AppModel) selectTaskByID(taskID string) {
+	if taskID == "" {
+		return
+	}
+	items := m.tasksList.Items()
+	for idx, item := range items {
+		task, ok := item.(taskItem)
+		if !ok {
+			continue
+		}
+		if task.ID == taskID {
+			m.tasksList.Select(idx)
+			return
+		}
+	}
+}

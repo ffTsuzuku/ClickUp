@@ -114,6 +114,13 @@ type statusUpdatedMsg struct {
 	Comments []clickup.Comment
 }
 
+type taskFieldsUpdatedMsg struct {
+	Task     *clickup.Task
+	Tasks    []clickup.Task
+	Comments []clickup.Comment
+	Popup    string
+}
+
 type teamMembersMsg []clickup.Member
 
 type commentAddedMsg struct{}

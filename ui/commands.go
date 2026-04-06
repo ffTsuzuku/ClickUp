@@ -367,6 +367,36 @@ func updateDescriptionCmd(c *clickup.Client, taskID, teamID, description string,
 	}
 }
 
+func refreshTaskFieldsCmd(c *clickup.Client, taskID, teamID, listID, popup string, mutate func() error) tea.Cmd {
+	return func() tea.Msg {
+		if err := mutate(); err != nil {
+			return errMsg(err)
+		}
+
+		task, err := c.GetTask(taskID, teamID)
+		if err != nil {
+			return errMsg(err)
+		}
+
+		tasks, err := c.GetTasksForVisibleList(teamID, listID)
+		if err != nil {
+			return errMsg(err)
+		}
+
+		comments, err := fetchCommentsRecursive(taskID, c)
+		if err != nil {
+			return errMsg(err)
+		}
+
+		return taskFieldsUpdatedMsg{
+			Task:     task,
+			Tasks:    tasks,
+			Comments: comments,
+			Popup:    popup,
+		}
+	}
+}
+
 func fetchAllListsForMoveCmd(c *clickup.Client, spaceID string) tea.Cmd {
 	return func() tea.Msg {
 		lists, err := c.GetSpaceLists(spaceID)
@@ -405,16 +435,22 @@ func editCommentCmd(c *clickup.Client, commentID, text string, members []clickup
 	}
 }
 
-func setPriorityCmd(c *clickup.Client, taskID, teamID string, priority *int) tea.Cmd {
-	return func() tea.Msg {
-		if err := c.SetTaskPriority(taskID, priority); err != nil {
-			return errMsg(err)
-		}
+func setPriorityCmd(c *clickup.Client, taskID, teamID, listID, popup string, priority *int) tea.Cmd {
+	return refreshTaskFieldsCmd(c, taskID, teamID, listID, popup, func() error {
+		return c.SetTaskPriority(taskID, priority)
+	})
+}
 
-		task, _ := c.GetTask(taskID, teamID)
-		comments, _ := fetchCommentsRecursive(taskID, c)
-		return taskDetailMsg{Task: task, Comments: comments}
-	}
+func updatePointsCmd(c *clickup.Client, taskID, teamID, listID string, points float64) tea.Cmd {
+	return refreshTaskFieldsCmd(c, taskID, teamID, listID, fmt.Sprintf("Updated points to %v", points), func() error {
+		return c.UpdatePoints(taskID, points)
+	})
+}
+
+func updateAssigneesCmd(c *clickup.Client, taskID, teamID, listID string, addIDs, removeIDs []int, popup string) tea.Cmd {
+	return refreshTaskFieldsCmd(c, taskID, teamID, listID, popup, func() error {
+		return c.UpdateAssignees(taskID, addIDs, removeIDs)
+	})
 }
 
 func deleteCommentCmd(c *clickup.Client, commentID string) tea.Cmd {

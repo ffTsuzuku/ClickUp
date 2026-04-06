@@ -9,6 +9,15 @@ import (
 	"github.com/tsuzuku/clickup-tui/config"
 )
 
+func hasSuggestion(suggestions []Suggestion, text string) bool {
+	for _, suggestion := range suggestions {
+		if suggestion.Text == text {
+			return true
+		}
+	}
+	return false
+}
+
 func newTestModel(t *testing.T) *AppModel {
 	t.Helper()
 
@@ -244,6 +253,139 @@ func TestCommandEnterExecutesTypedChecklistAddNameThatMatchesOtherCommand(t *tes
 	}
 	if got.state != stateTaskDetail {
 		t.Fatalf("state = %v, want %v", got.state, stateTaskDetail)
+	}
+}
+
+func TestCommandEnterStatusFromTaskListUsesCursorTask(t *testing.T) {
+	m := newTestModel(t)
+	m.state = stateCommand
+	m.prevState = stateTasks
+	m.selectedTeam = "team-1"
+	m.selectedList = "list-1"
+	m.allTasks = []clickup.Task{
+		makeTask("task-1", "Task 1"),
+		makeTask("task-2", "Task 2"),
+	}
+	m.applyTaskFilter("")
+	m.activeList = &m.tasksList
+	m.tasksList.Select(1)
+	m.cmdInput.SetValue("/status done")
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(*AppModel)
+
+	if got.loadingMsg != "Updating status..." {
+		t.Fatalf("loadingMsg = %q, want %q", got.loadingMsg, "Updating status...")
+	}
+	if got.selectedTask.ID != "task-2" {
+		t.Fatalf("selectedTask.ID = %q, want %q", got.selectedTask.ID, "task-2")
+	}
+	if got.state != stateTasks {
+		t.Fatalf("state = %v, want %v", got.state, stateTasks)
+	}
+	if cmd == nil {
+		t.Fatal("cmd = nil, want status update command")
+	}
+}
+
+func TestStatusUpdatedMsgReselectsUpdatedTaskInTaskList(t *testing.T) {
+	m := newTestModel(t)
+	m.state = stateTasks
+	m.prevState = stateTasks
+	m.allTasks = []clickup.Task{
+		makeTask("task-1", "Task 1"),
+		makeTask("task-2", "Task 2"),
+	}
+	m.applyTaskFilter("")
+	m.activeList = &m.tasksList
+	m.tasksList.Select(0)
+
+	updatedTask := makeTask("task-2", "Task 2")
+	updatedTask.Status.Status = "done"
+
+	updated, _ := m.Update(statusUpdatedMsg{
+		Task:     &updatedTask,
+		Tasks:    []clickup.Task{makeTask("task-1", "Task 1"), updatedTask},
+		Comments: nil,
+	})
+	got := updated.(*AppModel)
+
+	selected, ok := got.tasksList.SelectedItem().(taskItem)
+	if !ok {
+		t.Fatal("selected item is not a task")
+	}
+	if selected.ID != "task-2" {
+		t.Fatalf("selected item id = %q, want %q", selected.ID, "task-2")
+	}
+	if got.selectedTask.Status.Status != "done" {
+		t.Fatalf("selectedTask status = %q, want %q", got.selectedTask.Status.Status, "done")
+	}
+}
+
+func TestTaskFieldsUpdatedMsgReselectsUpdatedTaskInTaskList(t *testing.T) {
+	m := newTestModel(t)
+	m.state = stateTaskDetail
+	m.prevState = stateTaskDetail
+	m.allTasks = []clickup.Task{
+		makeTask("task-1", "Task 1"),
+		makeTask("task-2", "Task 2"),
+	}
+	m.applyTaskFilter("")
+	m.activeList = &m.tasksList
+	m.tasksList.Select(0)
+
+	updatedTask := makeTask("task-2", "Task 2")
+	points := 5.0
+	updatedTask.Points = &points
+
+	updated, _ := m.Update(taskFieldsUpdatedMsg{
+		Task:     &updatedTask,
+		Tasks:    []clickup.Task{makeTask("task-1", "Task 1"), updatedTask},
+		Comments: nil,
+		Popup:    "Updated points to 5",
+	})
+	got := updated.(*AppModel)
+
+	selected, ok := got.tasksList.SelectedItem().(taskItem)
+	if !ok {
+		t.Fatal("selected item is not a task")
+	}
+	if selected.ID != "task-2" {
+		t.Fatalf("selected item id = %q, want %q", selected.ID, "task-2")
+	}
+	if got.selectedTask.Points == nil || *got.selectedTask.Points != 5 {
+		t.Fatalf("selectedTask points = %#v, want 5", got.selectedTask.Points)
+	}
+	if got.popupMsg != "Updated points to 5" {
+		t.Fatalf("popupMsg = %q, want %q", got.popupMsg, "Updated points to 5")
+	}
+}
+
+func TestCommandSuggestionsIncludeStatusInTaskList(t *testing.T) {
+	m := newTestModel(t)
+	m.prevState = stateTasks
+	m.selectedSpace = "space-1"
+	m.allSpaces = []clickup.Space{
+		{
+			ID: "space-1",
+			Statuses: []clickup.TaskStatus{
+				{Status: "open"},
+				{Status: "done"},
+			},
+		},
+	}
+	m.allTasks = []clickup.Task{
+		makeTask("task-1", "Task 1"),
+		makeTask("task-2", "Task 2"),
+	}
+
+	m.updateCommandSuggestions()
+
+	if !hasSuggestion(m.suggestions, "/status ") {
+		t.Fatal("missing /status suggestion in task list command palette")
+	}
+	if !hasSuggestion(m.suggestions, "/status done") {
+		t.Fatal("missing concrete /status done suggestion in task list command palette")
 	}
 }
 

@@ -451,6 +451,7 @@ func (m *AppModel) updateCommandSuggestions() {
 		sugs = append(sugs, Suggestion{"/filter status", "Filter by task status"})
 		sugs = append(sugs, Suggestion{"/filter title", "Filter by task title text"})
 		sugs = append(sugs, Suggestion{"/filter id", "Filter by task ID"})
+		sugs = append(sugs, Suggestion{"/status ", "Change the highlighted ticket status"})
 
 		assignees := make(map[string]bool)
 		statuses := make(map[string]bool)
@@ -465,6 +466,9 @@ func (m *AppModel) updateCommandSuggestions() {
 		}
 		for s := range statuses {
 			sugs = append(sugs, Suggestion{"/filter status " + s, "Show tasks in " + s + " status"})
+		}
+		for _, s := range m.availableStatuses() {
+			sugs = append(sugs, Suggestion{"/status " + s, "Set the highlighted ticket status to " + s})
 		}
 	} else if m.prevState == stateTaskDetail {
 		sugs = append(sugs, Suggestion{"/status ", "Change ticket status"})

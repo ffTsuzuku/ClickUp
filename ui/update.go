@@ -276,7 +276,18 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.selectedComments = msg.Comments
 		m.updateViewportContent()
 		m.applyHierarchyFilter(strings.TrimPrefix(m.cmdInput.Value(), "/filter "))
+		m.selectTaskByID(m.selectedTask.ID)
 		m.popupMsg = "Updated status to " + m.selectedTask.Status.Status
+		return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+	case taskFieldsUpdatedMsg:
+		m.loading = false
+		m.selectedTask = *msg.Task
+		m.allTasks = msg.Tasks
+		m.selectedComments = msg.Comments
+		m.updateViewportContent()
+		m.applyHierarchyFilter(strings.TrimPrefix(m.cmdInput.Value(), "/filter "))
+		m.selectTaskByID(m.selectedTask.ID)
+		m.popupMsg = msg.Popup
 		return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
 	case editorFinishedMsg:
 		if msg.err == nil && msg.content != "" {
@@ -1952,43 +1963,61 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.loadingMsg = "Reloading profile " + m.cfg.ActiveProfileName() + "..."
 				return m, tea.Batch(m.spinner.Tick, reloadProfileCmd(m.cfg, m.width, m.height, "Updated API key for profile "+m.cfg.ActiveProfileName()))
 			} else if strings.HasPrefix(val, "/status ") {
-				if m.prevState == stateTaskDetail {
-					newStatus := strings.TrimPrefix(val, "/status ")
-					if strings.TrimSpace(newStatus) == "" {
+				if m.prevState == stateTaskDetail || m.prevState == stateTasks {
+					newStatus := strings.TrimSpace(strings.TrimPrefix(val, "/status "))
+					if newStatus == "" {
 						m.popupMsg = "Error: status required"
 						return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
 					}
+
+					targetTask := m.selectedTask
+					if m.prevState == stateTasks {
+						selectedTask, ok := m.taskFromCursor()
+						if !ok {
+							m.popupMsg = "Error: highlight a ticket first"
+							return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+						}
+						targetTask = selectedTask
+						m.selectedTask = selectedTask
+					}
+
 					m.loading = true
 					m.loadingMsg = "Updating status..."
-					return m, tea.Batch(m.spinner.Tick, updateStatusCmd(m.client, m.selectedTask.ID, m.selectedTeam, m.selectedList, newStatus))
+					return m, tea.Batch(m.spinner.Tick, updateStatusCmd(m.client, targetTask.ID, m.selectedTeam, m.selectedList, newStatus))
 				}
 			} else if strings.HasPrefix(val, "/priority ") {
 				if m.prevState == stateTaskDetail {
 					input := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(val, "/priority ")))
 					var p *int
+					popup := "Updated priority"
 					valid := true
 					switch input {
 					case "urgent", "1":
 						v := 1
 						p = &v
+						popup = "Updated priority to urgent"
 					case "high", "2":
 						v := 2
 						p = &v
+						popup = "Updated priority to high"
 					case "normal", "3":
 						v := 3
 						p = &v
+						popup = "Updated priority to normal"
 					case "low", "4":
 						v := 4
 						p = &v
+						popup = "Updated priority to low"
 					case "none", "no", "clear", "0":
 						p = nil
+						popup = "Cleared priority"
 					default:
 						valid = false
 					}
 					if valid {
 						m.loading = true
 						m.loadingMsg = "Updating priority..."
-						return m, tea.Batch(m.spinner.Tick, setPriorityCmd(m.client, m.selectedTask.ID, m.selectedTeam, p))
+						return m, tea.Batch(m.spinner.Tick, setPriorityCmd(m.client, m.selectedTask.ID, m.selectedTeam, m.selectedList, popup, p))
 					} else {
 						m.popupMsg = "Error: Invalid priority. Use urgent, high, normal, low, or none."
 						return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
@@ -2009,18 +2038,13 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.prevState == stateTaskDetail {
 					ptStr := strings.TrimPrefix(val, "/points ")
 					pts, err := strconv.ParseFloat(ptStr, 64)
-					if err == nil {
-						m.client.UpdatePoints(m.selectedTask.ID, pts)
-						m.selectedTask.Points = &pts
-						m.updateViewportContent()
-						for i, t := range m.allTasks {
-							if t.ID == m.selectedTask.ID {
-								m.allTasks[i].Points = &pts
-								break
-							}
-						}
-						m.applyHierarchyFilter(strings.TrimPrefix(m.cmdInput.Value(), "/filter "))
+					if err != nil {
+						m.popupMsg = "Error: invalid points value"
+						return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
 					}
+					m.loading = true
+					m.loadingMsg = "Updating points..."
+					return m, tea.Batch(m.spinner.Tick, updatePointsCmd(m.client, m.selectedTask.ID, m.selectedTeam, m.selectedList, pts))
 				}
 			} else if strings.HasPrefix(val, "/share") {
 				if m.prevState == stateTaskDetail {
@@ -2371,20 +2395,12 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 								removes = append(removes, a.ID)
 							}
 						}
-						taskID := m.selectedTask.ID
-						newAssignee := clickup.Assignee{ID: addID, Username: username}
-						if err := m.client.UpdateAssignees(taskID, []int{addID}, removes); err == nil {
-							m.selectedTask.Assignees = []clickup.Assignee{newAssignee}
-							for i, t := range m.allTasks {
-								if t.ID == taskID {
-									m.allTasks[i].Assignees = []clickup.Assignee{newAssignee}
-									break
-								}
-							}
-							m.updateViewportContent()
-							m.applyTaskFilter("")
-						}
+						m.loading = true
+						m.loadingMsg = "Updating assignee..."
+						return m, tea.Batch(m.spinner.Tick, updateAssigneesCmd(m.client, m.selectedTask.ID, m.selectedTeam, m.selectedList, []int{addID}, removes, "Updated assignee to "+username))
 					}
+					m.popupMsg = "Error: assignee not found"
+					return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
 				}
 			} else if strings.HasPrefix(val, "/default set") {
 				switch m.prevState {
