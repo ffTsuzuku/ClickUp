@@ -42,9 +42,10 @@ func TestTaskDetailMsgResetsViewportWhenTaskChanges(t *testing.T) {
 
 	newTask := makeTask("new-task", "New Task")
 	updated, _ := m.Update(taskDetailMsg{
-		Task:      &newTask,
-		Comments:  nil,
-		BackState: stateTasks,
+		Task:            &newTask,
+		Comments:        nil,
+		BackState:       stateTasks,
+		PreserveHistory: false,
 	})
 	got := updated.(*AppModel)
 
@@ -62,6 +63,28 @@ func TestTaskDetailMsgResetsViewportWhenTaskChanges(t *testing.T) {
 	}
 	if !strings.Contains(got.vp.View(), newTask.Name) {
 		t.Fatalf("viewport does not show new task name: %q", got.vp.View())
+	}
+}
+
+func TestTaskDetailMsgPreservesHistoryWhenRequested(t *testing.T) {
+	m := newTestModel(t)
+	m.selectedTask = makeTask("child-task", "Child Task")
+	m.taskHistory = []clickup.Task{makeTask("parent-task", "Parent Task")}
+
+	targetTask := makeTask("next-task", "Next Task")
+	updated, _ := m.Update(taskDetailMsg{
+		Task:            &targetTask,
+		Comments:        nil,
+		BackState:       stateTaskDetail,
+		PreserveHistory: true,
+	})
+	got := updated.(*AppModel)
+
+	if len(got.taskHistory) != 1 {
+		t.Fatalf("taskHistory len = %d, want 1", len(got.taskHistory))
+	}
+	if got.taskHistory[0].ID != "parent-task" {
+		t.Fatalf("taskHistory[0] = %q, want %q", got.taskHistory[0].ID, "parent-task")
 	}
 }
 
@@ -124,6 +147,57 @@ func TestCommandEnterExecutesTypedChecklistAddNameThatMatchesSuggestion(t *testi
 	}
 	if got.state != stateTaskDetail {
 		t.Fatalf("state = %v, want %v", got.state, stateTaskDetail)
+	}
+}
+
+func TestTaskDetailParentShortcutQueuesParentFetch(t *testing.T) {
+	m := newTestModel(t)
+	parentID := "parent-task"
+	m.state = stateTaskDetail
+	m.selectedTeam = "team-1"
+	m.selectedTask = makeTask("child-task", "Child Task")
+	m.selectedTask.Parent = &parentID
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	got := updated.(*AppModel)
+
+	if !got.loading {
+		t.Fatalf("loading = %v, want true", got.loading)
+	}
+	if got.loadingMsg != "Fetching parent task..." {
+		t.Fatalf("loadingMsg = %q, want %q", got.loadingMsg, "Fetching parent task...")
+	}
+	if len(got.taskHistory) != 1 || got.taskHistory[0].ID != "child-task" {
+		t.Fatalf("taskHistory = %#v, want child task in history", got.taskHistory)
+	}
+	if cmd == nil {
+		t.Fatal("cmd = nil, want fetch command")
+	}
+}
+
+func TestTaskDetailParentShortcutReplacesImmediateParentHistoryEntry(t *testing.T) {
+	m := newTestModel(t)
+	parentID := "parent-task"
+	m.state = stateTaskDetail
+	m.selectedTeam = "team-1"
+	m.selectedTask = makeTask("child-task", "Child Task")
+	m.selectedTask.Parent = &parentID
+	m.taskHistory = []clickup.Task{
+		makeTask("grandparent-task", "Grandparent Task"),
+		makeTask("parent-task", "Parent Task"),
+	}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	got := updated.(*AppModel)
+
+	if len(got.taskHistory) != 2 {
+		t.Fatalf("taskHistory len = %d, want 2", len(got.taskHistory))
+	}
+	if got.taskHistory[0].ID != "grandparent-task" {
+		t.Fatalf("taskHistory[0] = %q, want %q", got.taskHistory[0].ID, "grandparent-task")
+	}
+	if got.taskHistory[1].ID != "child-task" {
+		t.Fatalf("taskHistory[1] = %q, want %q", got.taskHistory[1].ID, "child-task")
 	}
 }
 

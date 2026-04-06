@@ -18,9 +18,10 @@ type listsMsg *clickup.SpaceHierarchy
 type tasksMsg []clickup.Task
 
 type taskDetailMsg struct {
-	Task      *clickup.Task
-	Comments  []clickup.Comment
-	BackState state
+	Task            *clickup.Task
+	Comments        []clickup.Comment
+	BackState       state
+	PreserveHistory bool
 }
 
 type commentsMsg []clickup.Comment

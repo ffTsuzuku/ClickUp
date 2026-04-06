@@ -99,7 +99,7 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.activeList = &m.searchList
 		return m, nil
 	case taskDetailMsg:
-		return m.applyTaskDetail(msg.Task, msg.Comments, msg.BackState, false)
+		return m.applyTaskDetail(msg.Task, msg.Comments, msg.BackState, msg.PreserveHistory)
 	case attachmentUploadedMsg:
 		_, cmd := m.applyTaskDetail(msg.Task, msg.Comments, msg.BackState, true)
 		m.popupMsg = msg.Popup
@@ -729,9 +729,25 @@ func (m *AppModel) updateDetail(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.taskHistory = append(m.taskHistory, m.selectedTask)
 				m.loading = true
 				m.loadingMsg = "Fetching subtask details..."
-				return m, tea.Batch(m.spinner.Tick, fetchTaskCmd(m.client, subtasks[idx].ID, m.selectedTeam, stateTaskDetail))
+				return m, tea.Batch(m.spinner.Tick, fetchTaskDetailCmd(m.client, subtasks[idx].ID, m.selectedTeam, stateTaskDetail, true))
 			}
 			return m, nil
+		case "p":
+			if m.selectedTask.Parent == nil || *m.selectedTask.Parent == "" {
+				m.popupMsg = "This task has no parent."
+				return m, tea.Tick(time.Second*2, func(_ time.Time) tea.Msg { return clearPopupMsg{} })
+			}
+
+			parentID := *m.selectedTask.Parent
+			if n := len(m.taskHistory); n > 0 && m.taskHistory[n-1].ID == parentID {
+				m.taskHistory[n-1] = m.selectedTask
+			} else {
+				m.taskHistory = append(m.taskHistory, m.selectedTask)
+			}
+
+			m.loading = true
+			m.loadingMsg = "Fetching parent task..."
+			return m, tea.Batch(m.spinner.Tick, fetchTaskDetailCmd(m.client, parentID, m.selectedTeam, stateTaskDetail, true))
 		case "o":
 			if m.selectedTask.URL != "" {
 				m.popupMsg = "Opening in Browser..."

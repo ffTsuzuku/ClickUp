@@ -230,6 +230,10 @@ func deleteTaskCmd(c *clickup.Client, teamID, listID, taskID, name string) tea.C
 }
 
 func fetchTaskCmd(c *clickup.Client, taskID, teamID string, backState state) tea.Cmd {
+	return fetchTaskDetailCmd(c, taskID, teamID, backState, false)
+}
+
+func fetchTaskDetailCmd(c *clickup.Client, taskID, teamID string, backState state, preserveHistory bool) tea.Cmd {
 	return func() tea.Msg {
 		task, err := c.GetTask(taskID, teamID)
 		if err != nil {
@@ -239,9 +243,10 @@ func fetchTaskCmd(c *clickup.Client, taskID, teamID string, backState state) tea
 		comments, _ := fetchCommentsRecursive(task.ID, c)
 
 		return taskDetailMsg{
-			Task:      task,
-			Comments:  comments,
-			BackState: backState,
+			Task:            task,
+			Comments:        comments,
+			BackState:       backState,
+			PreserveHistory: preserveHistory,
 		}
 	}
 }

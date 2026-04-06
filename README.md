@@ -86,6 +86,7 @@ Task detail shortcuts:
 - `A`: copy the full task context for AI prompting.
 - `L`: open checklist view.
 - `C`: open comments view.
+- `p`: open the parent task.
 - `1`-`9`: jump to visible subtasks.
 
 Editor shortcuts:

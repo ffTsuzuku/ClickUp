@@ -1197,7 +1197,11 @@ func (m *AppModel) View() string {
 		}
 		mainContent = view
 	case stateTaskDetail:
-		hint := lipgloss.NewStyle().Foreground(ColorSubtext).Render("q: back • a: subtask • c: comment • o: open • s: share • r: refresh")
+		hintText := "q: back • a: subtask • c: comment • o: open • s: share • r: refresh"
+		if m.selectedTask.Parent != nil && *m.selectedTask.Parent != "" {
+			hintText += " • p: parent"
+		}
+		hint := lipgloss.NewStyle().Foreground(ColorSubtext).Render(hintText)
 		mainContent = m.vp.View() + "\n" + hint
 	case stateChecklist:
 		mainContent = m.vp.View()
