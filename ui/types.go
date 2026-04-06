@@ -135,7 +135,7 @@ type AppModel struct {
 	checklistViewItems     []checklistViewItem
 	checklistSelectedIdx   int
 	checklistEditingItem   *checklistViewItem
-	checklistEditInput     textinput.Model
+	checklistEditInput     textarea.Model
 	checklistPendingDelete clickup.Checklist
 	checklistEditOriginal  string
 	checklistSelection     *checklistSelectionTarget

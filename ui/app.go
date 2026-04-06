@@ -49,10 +49,13 @@ func newBaseModel(cfg *config.Config) *AppModel {
 	ci.SetWidth(80)
 	ci.SetHeight(5)
 
-	clEdit := textinput.New()
+	clEdit := textarea.New()
 	clEdit.Placeholder = "Item name..."
 	clEdit.CharLimit = 200
 	clEdit.Prompt = "  > "
+	clEdit.SetWidth(80)
+	clEdit.SetHeight(3)
+	clEdit.MaxHeight = 6
 
 	cmd := textinput.New()
 	cmd.Placeholder = "Enter slash command (e.g. /filter) or /help..."
@@ -300,6 +303,18 @@ func (m *AppModel) updateLayout() {
 	m.fileList.SetSize(m.width-h, contentH)
 	m.vp.Width = m.width - h
 	m.vp.Height = contentH
+	checklistEditWidth := m.vp.Width - 2
+	if checklistEditWidth < 10 {
+		checklistEditWidth = 10
+	}
+	m.checklistEditInput.SetWidth(checklistEditWidth)
+	if contentH < 3 {
+		m.checklistEditInput.SetHeight(3)
+	} else if contentH > m.checklistEditInput.MaxHeight && m.checklistEditInput.MaxHeight > 0 {
+		m.checklistEditInput.SetHeight(m.checklistEditInput.MaxHeight)
+	} else {
+		m.checklistEditInput.SetHeight(contentH)
+	}
 	if m.state == stateEditDesc {
 		m.refreshEditDescLayout()
 	} else {

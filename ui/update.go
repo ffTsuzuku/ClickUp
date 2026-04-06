@@ -1479,10 +1479,10 @@ func (m *AppModel) updateChecklist(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.checklistEditingItem = &m.checklistViewItems[m.checklistSelectedIdx]
 				m.checklistEditOriginal = m.getChecklistEditOriginal()
 				m.checklistEditInput.SetValue(m.checklistEditOriginal)
-				m.checklistEditInput.Focus()
-				m.checklistEditInput.SetCursor(len(m.checklistEditInput.Value()))
+				focusCmd := m.checklistEditInput.Focus()
+				m.checklistEditInput.CursorEnd()
 				m.updateChecklistViewportContent()
-				return m, textinput.Blink
+				return m, tea.Batch(focusCmd, textarea.Blink)
 			}
 			return m, nil
 
@@ -1492,10 +1492,10 @@ func (m *AppModel) updateChecklist(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.checklistEditOriginal = ""
 				m.checklistEditInput.SetValue("")
 				m.checklistEditInput.Placeholder = "New item name..."
-				m.checklistEditInput.Focus()
+				focusCmd := m.checklistEditInput.Focus()
 				m.checklistEditInput.SetCursor(0)
 				m.updateChecklistViewportContent()
-				return m, textinput.Blink
+				return m, tea.Batch(focusCmd, textarea.Blink)
 			}
 			return m, nil
 
@@ -1505,10 +1505,10 @@ func (m *AppModel) updateChecklist(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.checklistEditOriginal = m.getChecklistEditOriginal()
 				m.checklistEditInput.SetValue(m.checklistEditOriginal)
 				m.checklistEditInput.Placeholder = "Name..."
-				m.checklistEditInput.Focus()
-				m.checklistEditInput.SetCursor(len(m.checklistEditInput.Value()))
+				focusCmd := m.checklistEditInput.Focus()
+				m.checklistEditInput.CursorEnd()
 				m.updateChecklistViewportContent()
-				return m, textinput.Blink
+				return m, tea.Batch(focusCmd, textarea.Blink)
 			}
 			return m, nil
 
@@ -1546,9 +1546,9 @@ func (m *AppModel) updateChecklist(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.checklistEditOriginal = m.getChecklistEditOriginal()
 					m.checklistEditInput.SetValue(item.checklist.Name)
 					m.checklistEditInput.Placeholder = "Checklist name..."
-					m.checklistEditInput.Focus()
-					m.checklistEditInput.SetCursor(len(m.checklistEditInput.Value()))
-					return m, textinput.Blink
+					focusCmd := m.checklistEditInput.Focus()
+					m.checklistEditInput.CursorEnd()
+					return m, tea.Batch(focusCmd, textarea.Blink)
 				}
 			}
 			return m, nil
@@ -1556,12 +1556,12 @@ func (m *AppModel) updateChecklist(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "n":
 			m.checklistEditInput.SetValue("")
 			m.checklistEditInput.Placeholder = "New checklist name..."
-			m.checklistEditInput.Focus()
+			focusCmd := m.checklistEditInput.Focus()
 			m.checklistEditInput.SetCursor(0)
 			m.checklistEditingItem = nil
 			m.checklistPendingDelete = clickup.Checklist{}
 			m.updateChecklistViewportContent()
-			return m, textinput.Blink
+			return m, tea.Batch(focusCmd, textarea.Blink)
 
 		case "s":
 			return m, m.copyTaskURL()

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func (m *AppModel) contentViewportSize() (int, int) {
@@ -138,7 +139,7 @@ func (m *AppModel) buildChecklistView() (string, []int, []int) {
 		}
 		b.WriteString(input)
 		b.WriteString("\n")
-		currentLine++
+		currentLine += lipgloss.Height(input)
 	}
 
 	if len(m.selectedTask.Checklists) == 0 {
@@ -168,6 +169,13 @@ func (m *AppModel) buildChecklistView() (string, []int, []int) {
 	indent := "  "
 	checkboxUnchecked := lipgloss.NewStyle().Foreground(ColorPrimary).Render("[ ]")
 	checkboxChecked := lipgloss.NewStyle().Foreground(ColorSecondary).Render("[x]")
+	checklistWidth := m.vp.Width
+	if checklistWidth <= 0 {
+		checklistWidth = m.width
+	}
+	if checklistWidth < 24 {
+		checklistWidth = 24
+	}
 
 	for idx, viewItem := range m.checklistViewItems {
 		isSelected := idx == m.checklistSelectedIdx
@@ -184,10 +192,10 @@ func (m *AppModel) buildChecklistView() (string, []int, []int) {
 			b.WriteString(line)
 			b.WriteString("\n")
 			currentLine++
-			ends = append(ends, currentLine-1)
 			if isSelected && m.isEditingChecklistItem() && m.checklistEditingItem != nil {
 				renderEditInput()
 			}
+			ends = append(ends, currentLine-1)
 		} else {
 			checkbox := checkboxUnchecked
 			itemStyle := ChecklistItemStyle
@@ -200,8 +208,8 @@ func (m *AppModel) buildChecklistView() (string, []int, []int) {
 			prefix := fmt.Sprintf("%s%s%d. ", indent, padding, viewItem.itemIndex+1)
 			name := viewItem.item.Name
 
+			var renderedItem string
 			if isSelected {
-
 				textStyle := ChecklistSelectedStyle
 				if viewItem.item.Resolved {
 					textStyle = textStyle.Copy().Foreground(ColorSubtext)
@@ -216,17 +224,18 @@ func (m *AppModel) buildChecklistView() (string, []int, []int) {
 				cbStr := cbStyle.Render(cbText)
 
 				starts = append(starts, currentLine)
-				b.WriteString(fmt.Sprintf("%s%s %s", textStyle.Render(prefix), cbStr, textStyle.Render(name)))
+				renderedItem = renderChecklistItemLine(prefix, cbStr, name, checklistWidth, textStyle)
 			} else {
 				starts = append(starts, currentLine)
-				b.WriteString(fmt.Sprintf("%s%s %s", itemStyle.Render(prefix), checkbox, itemStyle.Render(name)))
+				renderedItem = renderChecklistItemLine(prefix, checkbox, name, checklistWidth, itemStyle)
 			}
+			b.WriteString(renderedItem)
 			b.WriteString("\n")
-			currentLine++
-			ends = append(ends, currentLine-1)
+			currentLine += lipgloss.Height(renderedItem)
 			if isSelected && m.isEditingChecklistItem() && m.checklistEditingItem != nil {
 				renderEditInput()
 			}
+			ends = append(ends, currentLine-1)
 		}
 	}
 
@@ -235,6 +244,45 @@ func (m *AppModel) buildChecklistView() (string, []int, []int) {
 	currentLine += 2
 
 	return b.String(), starts, ends
+}
+
+func renderChecklistItemLine(prefix, checkbox, name string, maxWidth int, itemStyle lipgloss.Style) string {
+	nameLines, continuationPrefix := wrapChecklistTextLines(prefix+checkbox+" ", name, maxWidth)
+
+	for i, line := range nameLines {
+		if i == 0 {
+			nameLines[i] = itemStyle.Render(prefix) + checkbox + " " + itemStyle.Render(line)
+			continue
+		}
+		nameLines[i] = itemStyle.Render(continuationPrefix + line)
+	}
+
+	return strings.Join(nameLines, "\n")
+}
+
+func renderWrappedChecklistDetailLine(prefix, name string, maxWidth int) string {
+	nameLines, continuationPrefix := wrapChecklistTextLines(prefix, name, maxWidth)
+	for i, line := range nameLines {
+		if i == 0 {
+			nameLines[i] = prefix + line
+			continue
+		}
+		nameLines[i] = continuationPrefix + line
+	}
+	return strings.Join(nameLines, "\n")
+}
+
+func wrapChecklistTextLines(prefix, name string, maxWidth int) ([]string, string) {
+	prefixWidth := lipgloss.Width(prefix)
+	nameWidth := maxWidth - prefixWidth
+	if nameWidth < 8 {
+		nameWidth = 8
+	}
+
+	wrappedName := ansi.Hardwrap(name, nameWidth, false)
+	nameLines := strings.Split(wrappedName, "\n")
+	continuationPrefix := strings.Repeat(" ", prefixWidth)
+	return nameLines, continuationPrefix
 }
 
 func (m *AppModel) renderConfirmChecklistDelete() string {
@@ -664,6 +712,13 @@ func (m *AppModel) updateViewportContent() {
 	b.WriteString(divider + "\n\n")
 	b.WriteString(SectionHeaderStyle.Render("CHECKLISTS") + "\n")
 	if len(m.selectedTask.Checklists) > 0 {
+		checklistWidth := m.vp.Width
+		if checklistWidth <= 0 {
+			checklistWidth = m.width
+		}
+		if checklistWidth < 24 {
+			checklistWidth = 24
+		}
 		checklistViewItems := buildChecklistViewItems(m.selectedTask.Checklists)
 		currentChecklistNumber := 0
 		renderedItemsForChecklist := 0
@@ -685,7 +740,9 @@ func (m *AppModel) updateViewportContent() {
 				marker = "[x]"
 			}
 			padding := strings.Repeat("  ", viewItem.depth)
-			b.WriteString(fmt.Sprintf("   %d.%d %s%s %s\n", currentChecklistNumber, viewItem.itemIndex+1, padding, marker, viewItem.item.Name))
+			prefix := fmt.Sprintf("   %d.%d %s%s ", currentChecklistNumber, viewItem.itemIndex+1, padding, marker)
+			b.WriteString(renderWrappedChecklistDetailLine(prefix, viewItem.item.Name, checklistWidth))
+			b.WriteString("\n")
 			renderedItemsForChecklist++
 		}
 	} else {
