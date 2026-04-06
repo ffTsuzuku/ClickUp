@@ -1086,6 +1086,7 @@ func (m *AppModel) applyTaskDetail(task *clickup.Task, comments []clickup.Commen
 
 	if wasChecklist {
 		m.flattenChecklists()
+		m.applyChecklistSelectionTarget()
 		m.updateChecklistViewportContent()
 	} else {
 		m.state = stateTaskDetail
@@ -1285,6 +1286,7 @@ func (m *AppModel) updateChecklist(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if editingItem == nil {
 						m.loading = true
 						m.loadingMsg = "Creating checklist..."
+						m.checklistSelection = &checklistSelectionTarget{selectLastChecklist: true}
 						return m, tea.Batch(m.spinner.Tick, func() tea.Msg {
 							if err := m.client.CreateChecklist(m.selectedTask.ID, newValue); err != nil {
 								return errMsg(err)
@@ -1298,6 +1300,10 @@ func (m *AppModel) updateChecklist(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.loading = true
 						m.loadingMsg = "Adding item..."
 						checklist := editingItem.checklist
+						m.checklistSelection = &checklistSelectionTarget{
+							checklistID:    checklist.ID,
+							selectLastItem: true,
+						}
 						return m, tea.Batch(m.spinner.Tick, func() tea.Msg {
 							if err := m.client.CreateChecklistItem(checklist.ID, newValue); err != nil {
 								return errMsg(err)

@@ -138,6 +138,7 @@ type AppModel struct {
 	checklistEditInput     textinput.Model
 	checklistPendingDelete clickup.Checklist
 	checklistEditOriginal  string
+	checklistSelection     *checklistSelectionTarget
 	currentUser            string
 	currentUserID          int
 	activeProfile          string
@@ -151,4 +152,10 @@ type searchQuery struct {
 	Assignee string
 	Title    string
 	ID       string
+}
+
+type checklistSelectionTarget struct {
+	checklistID         string
+	selectLastItem      bool
+	selectLastChecklist bool
 }

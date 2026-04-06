@@ -246,3 +246,64 @@ func TestCommandEnterExecutesTypedChecklistAddNameThatMatchesOtherCommand(t *tes
 		t.Fatalf("state = %v, want %v", got.state, stateTaskDetail)
 	}
 }
+
+func TestApplyTaskDetailSelectsNewChecklistItemAfterRefresh(t *testing.T) {
+	m := newTestModel(t)
+	m.state = stateChecklist
+	m.checklistSelectedIdx = 0
+	m.checklistSelection = &checklistSelectionTarget{
+		checklistID:    "checklist-1",
+		selectLastItem: true,
+	}
+
+	task := makeTask("task-1", "Task")
+	task.Checklists = []clickup.Checklist{
+		{
+			ID:   "checklist-1",
+			Name: "Checklist",
+			Items: []clickup.ChecklistItem{
+				{ID: "item-1", Name: "First", DateCreated: "100"},
+				{ID: "item-2", Name: "Second", DateCreated: "200"},
+			},
+		},
+	}
+
+	updated, _ := m.applyTaskDetail(&task, nil, stateTaskDetail, false)
+	got := updated.(*AppModel)
+
+	if got.checklistSelectedIdx != 2 {
+		t.Fatalf("checklistSelectedIdx = %d, want 2", got.checklistSelectedIdx)
+	}
+	if got.checklistViewItems[got.checklistSelectedIdx].item.Name != "Second" {
+		t.Fatalf("selected item = %q, want %q", got.checklistViewItems[got.checklistSelectedIdx].item.Name, "Second")
+	}
+	if got.checklistSelection != nil {
+		t.Fatalf("checklistSelection = %#v, want nil", got.checklistSelection)
+	}
+}
+
+func TestApplyTaskDetailSelectsNewChecklistHeaderAfterRefresh(t *testing.T) {
+	m := newTestModel(t)
+	m.state = stateChecklist
+	m.checklistSelectedIdx = 0
+	m.checklistSelection = &checklistSelectionTarget{selectLastChecklist: true}
+
+	task := makeTask("task-1", "Task")
+	task.Checklists = []clickup.Checklist{
+		{ID: "checklist-1", Name: "First"},
+		{ID: "checklist-2", Name: "Second"},
+	}
+
+	updated, _ := m.applyTaskDetail(&task, nil, stateTaskDetail, false)
+	got := updated.(*AppModel)
+
+	if got.checklistSelectedIdx != 1 {
+		t.Fatalf("checklistSelectedIdx = %d, want 1", got.checklistSelectedIdx)
+	}
+	if got.checklistViewItems[got.checklistSelectedIdx].checklist.Name != "Second" {
+		t.Fatalf("selected checklist = %q, want %q", got.checklistViewItems[got.checklistSelectedIdx].checklist.Name, "Second")
+	}
+	if got.checklistSelection != nil {
+		t.Fatalf("checklistSelection = %#v, want nil", got.checklistSelection)
+	}
+}

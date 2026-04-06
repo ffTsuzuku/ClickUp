@@ -444,6 +444,34 @@ func (m *AppModel) flattenChecklists() {
 	}
 }
 
+func (m *AppModel) applyChecklistSelectionTarget() {
+	if m.checklistSelection == nil {
+		return
+	}
+
+	target := m.checklistSelection
+	m.checklistSelection = nil
+
+	if target.selectLastItem && target.checklistID != "" {
+		for idx := len(m.checklistViewItems) - 1; idx >= 0; idx-- {
+			item := m.checklistViewItems[idx]
+			if item.itemType == checklistTypeItem && item.checklist.ID == target.checklistID {
+				m.checklistSelectedIdx = idx
+				return
+			}
+		}
+	}
+
+	if target.selectLastChecklist {
+		for idx := len(m.checklistViewItems) - 1; idx >= 0; idx-- {
+			if m.checklistViewItems[idx].itemType == checklistTypeHeader {
+				m.checklistSelectedIdx = idx
+				return
+			}
+		}
+	}
+}
+
 func (m *AppModel) isEditingChecklistItem() bool {
 	return m.checklistEditInput.Focused()
 }
