@@ -467,6 +467,36 @@ func (m *AppModel) copyTaskTitle() tea.Cmd {
 	})
 }
 
+func (m *AppModel) copyTaskURL() tea.Cmd {
+	if m.selectedTask.URL == "" {
+		return nil
+	}
+	clipboard.WriteAll(m.selectedTask.URL)
+	m.popupMsg = "Copied URL to clipboard"
+	return tea.Tick(time.Second*1, func(_ time.Time) tea.Msg {
+		return clearPopupMsg{}
+	})
+}
+
+func (m *AppModel) copySelectedChecklistContent() tea.Cmd {
+	if m.checklistSelectedIdx < 0 || m.checklistSelectedIdx >= len(m.checklistViewItems) {
+		return nil
+	}
+
+	selected := m.checklistViewItems[m.checklistSelectedIdx]
+	if selected.itemType == checklistTypeHeader {
+		clipboard.WriteAll(selected.checklist.Name)
+		m.popupMsg = "Copied checklist name to clipboard"
+	} else {
+		clipboard.WriteAll(selected.item.Name)
+		m.popupMsg = "Copied checklist item to clipboard"
+	}
+
+	return tea.Tick(time.Second*1, func(_ time.Time) tea.Msg {
+		return clearPopupMsg{}
+	})
+}
+
 func (m *AppModel) copyTaskChecklists() tea.Cmd {
 	var sb strings.Builder
 	if len(m.selectedTask.Checklists) > 0 {

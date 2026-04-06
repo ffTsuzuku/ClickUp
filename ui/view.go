@@ -231,7 +231,7 @@ func (m *AppModel) buildChecklistView() (string, []int, []int) {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext).Italic(true).Render("↑↓ Navigate | Space Toggle | Tab/Shift+Tab Indent | a Add | r Rename | d Delete | n New | q Back"))
+	b.WriteString(lipgloss.NewStyle().Foreground(ColorSubtext).Italic(true).Render("↑↓ Navigate | Space Toggle | Tab/Shift+Tab Indent | a Add | r Rename | d Delete | n New | s Copy | q Back"))
 	currentLine += 2
 
 	return b.String(), starts, ends
@@ -905,14 +905,14 @@ func (m *AppModel) renderHeader() string {
 
 	logo := redStyle.Render("╺") + whiteStyle.Render("❯") + greenStyle.Render("╸")
 
-/**
-	ascii := ` ______     __         __     ______     __  __     __  __     ______  
-/\  ___\   /\ \       /\ \   /\  ___\   /\ \/ /    /\ \/\ \   /\  == \ 
-\ \ \____  \ \ \____  \ \ \  \ \ \____  \ \  _"-.  \ \ \_\ \  \ \  _-/ 
- \ \_____\  \ \_____\  \ \_\  \ \_____\  \ \_\ \_\  \ \_____\  \ \_\   
-  \/_____/   \/_____/   \/_/   \/_____/   \/_/\/_/   \/_____/   \/_/`
-*/
-	
+	/**
+	  	ascii := ` ______     __         __     ______     __  __     __  __     ______
+	  /\  ___\   /\ \       /\ \   /\  ___\   /\ \/ /    /\ \/\ \   /\  == \
+	  \ \ \____  \ \ \____  \ \ \  \ \ \____  \ \  _"-.  \ \ \_\ \  \ \  _-/
+	   \ \_____\  \ \_____\  \ \_\  \ \_____\  \ \_\ \_\  \ \_____\  \ \_\
+	    \/_____/   \/_____/   \/_/   \/_____/   \/_/\/_/   \/_____/   \/_/`
+	*/
+
 	ascii := `
  _________  ________  _________  ___  ___  ___     
 |\___   ___\\   __  \|\___   ___\\  \|\  \|\  \    

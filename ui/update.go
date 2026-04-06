@@ -721,14 +721,7 @@ func (m *AppModel) updateDetail(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.taskInput.Focus()
 			return m, textinput.Blink
 		case "s":
-			if m.selectedTask.URL != "" {
-				clipboard.WriteAll(m.selectedTask.URL)
-				m.popupMsg = "Copied URL to Clipboard"
-				return m, tea.Tick(time.Second*1, func(_ time.Time) tea.Msg {
-					return clearPopupMsg{}
-				})
-			}
-			return m, nil
+			return m, m.copySelectedChecklistContent()
 		case "1", "2", "3", "4", "5", "6", "7", "8", "9":
 			subtasks := m.getSubtasks(m.selectedTask.ID)
 			idx := int(msg.String()[0] - '1')
@@ -1536,6 +1529,9 @@ func (m *AppModel) updateChecklist(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.checklistPendingDelete = clickup.Checklist{}
 			m.updateChecklistViewportContent()
 			return m, textinput.Blink
+
+		case "s":
+			return m, m.copyTaskURL()
 		}
 	}
 
@@ -2009,12 +2005,8 @@ func (m *AppModel) updateCommand(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 			} else if strings.HasPrefix(val, "/share") {
-				if m.prevState == stateTaskDetail && m.selectedTask.URL != "" {
-					clipboard.WriteAll(m.selectedTask.URL)
-					m.popupMsg = "Copied URL to Clipboard"
-					return m, tea.Tick(time.Second*1, func(_ time.Time) tea.Msg {
-						return clearPopupMsg{}
-					})
+				if m.prevState == stateTaskDetail {
+					return m, m.copyTaskURL()
 				}
 			} else if strings.HasPrefix(val, "/delete") {
 				if m.prevState == stateTaskDetail {
