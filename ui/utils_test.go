@@ -71,6 +71,31 @@ func TestFlattenChecklistsUsesParentHierarchyOnly(t *testing.T) {
 	}
 }
 
+func TestGetSubtasksSortsByCreationTimeAscending(t *testing.T) {
+	parentID := "parent-1"
+
+	m := &AppModel{
+		allTasks: []clickup.Task{
+			{ID: "task-3", Name: "third", Parent: &parentID, DateCreated: "300"},
+			{ID: "task-2", Name: "second", Parent: &parentID, DateCreated: "200"},
+			{ID: "task-1", Name: "first", Parent: &parentID, DateCreated: "100"},
+			{ID: "other", Name: "other"},
+		},
+	}
+
+	got := m.getSubtasks(parentID)
+	if len(got) != 3 {
+		t.Fatalf("expected 3 subtasks, got %d", len(got))
+	}
+
+	wantIDs := []string{"task-1", "task-2", "task-3"}
+	for i := range wantIDs {
+		if got[i].ID != wantIDs[i] {
+			t.Fatalf("unexpected subtask order at %d: got %q want %q", i, got[i].ID, wantIDs[i])
+		}
+	}
+}
+
 func TestFlattenChecklistsSortsByCreationTimeWithinHierarchy(t *testing.T) {
 	parentID := "item-1"
 

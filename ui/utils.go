@@ -334,6 +334,12 @@ func (m *AppModel) getSubtasks(parentID string) []clickup.Task {
 			res = append(res, t)
 		}
 	}
+	sort.SliceStable(res, func(i, j int) bool {
+		if res[i].DateCreated != "" && res[j].DateCreated != "" && res[i].DateCreated != res[j].DateCreated {
+			return res[i].DateCreated < res[j].DateCreated
+		}
+		return res[i].ID < res[j].ID
+	})
 	return res
 }
 
